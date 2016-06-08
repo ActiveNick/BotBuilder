@@ -40,10 +40,11 @@ namespace Microsoft.Bot.Builder.Dialogs
     /// \skip Interactive
     /// \until while
     /// \until }
+    /// \until }
     /// 
     /// To use it your would do something like this:
     /// ~~~
-    ///             Interactive(FormDialog.FromForm<AnnotatedSandwichOrder>(() => AnnotatedSandwichOrder.BuildForm()));
+    ///             Interactive(FormDialog.FromForm<AnnotatedSandwichOrder>(() => AnnotatedSandwichOrder.BuildForm())).GetAwaiter().GetResult();
     /// ~~~
     /// 
     /// \section troubleshooting_q_and_a Troubleshooting Q & A
@@ -88,3 +89,8 @@ namespace Microsoft.Bot.Builder.Internals.Fibers { }
 /// <summary>Namespace for the machinery needed to talk to http://luis.ai.</summary>
 /// <remarks>This namespace is not useful for most developers.</remarks>
 namespace Microsoft.Bot.Builder.Luis { }
+
+/// <summary>
+/// Namespace for resources.
+/// </summary>
+namespace Microsoft.Bot.Builder.Resource { }

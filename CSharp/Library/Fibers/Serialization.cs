@@ -31,12 +31,14 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.CompilerServices;
 using System.Runtime.Serialization;
 
 namespace Microsoft.Bot.Builder.Internals.Fibers
@@ -60,14 +62,20 @@ namespace Microsoft.Bot.Builder.Internals.Fibers
 
         public sealed class StoreInstanceByTypeSurrogate : ISurrogateProvider
         {
+            public interface IResolver
+            {
+                bool Handles(Type type);
+                object Resolve(Type type);
+            }
+
             [Serializable]
             public sealed class ObjectReference : IObjectReference
             {
                 public readonly Type Type = null;
                 object IObjectReference.GetRealObject(StreamingContext context)
                 {
-                    var provider = (IServiceProvider)context.Context;
-                    return provider.GetService(this.Type);
+                    var provider = (IResolver)context.Context;
+                    return provider.Resolve(this.Type);
                 }
             }
 
@@ -80,9 +88,8 @@ namespace Microsoft.Bot.Builder.Internals.Fibers
 
             bool ISurrogateProvider.Handles(Type type, StreamingContext context, out int priority)
             {
-                var provider = (IServiceProvider)context.Context;
-                var instance = provider.GetService(type);
-                bool handles = instance != null;
+                var provider = (IResolver)context.Context;
+                var handles = provider.Handles(type);
                 priority = handles ? this.priority : 0;
                 return handles;
             }
@@ -142,6 +149,33 @@ namespace Microsoft.Bot.Builder.Internals.Fibers
             }
         }
 
+        public sealed class ClosureCaptureErrorSurrogate : ISurrogateProvider
+        {
+            private readonly int priority;
+            public ClosureCaptureErrorSurrogate(int priority)
+            {
+                this.priority = priority;
+            }
+
+            bool ISurrogateProvider.Handles(Type type, StreamingContext context, out int priority)
+            {
+                bool generated = Attribute.IsDefined(type, typeof(CompilerGeneratedAttribute));
+                bool handles = generated && !type.IsSerializable;
+                priority = handles ? this.priority : 0;
+                return handles;
+            }
+
+            void ISerializationSurrogate.GetObjectData(object obj, SerializationInfo info, StreamingContext context)
+            {
+                throw new ClosureCaptureException(obj);
+            }
+
+            object ISerializationSurrogate.SetObjectData(object obj, SerializationInfo info, StreamingContext context, ISurrogateSelector selector)
+            {
+                throw new NotImplementedException();
+            }
+        }
+
         public sealed class SurrogateLogDecorator : ISurrogateProvider
         {
             private readonly HashSet<Type> visited = new HashSet<Type>();
@@ -183,6 +217,34 @@ namespace Microsoft.Bot.Builder.Internals.Fibers
                     var message = $"{this.inner.GetType().Name}: visiting {type}";
                     this.trace.WriteLine(message);
                 }
+            }
+        }
+
+        public sealed class JObjectSurrogate : ISurrogateProvider
+        {
+            private readonly int priority;
+
+            public JObjectSurrogate(int priority)
+            {
+                this.priority = priority;
+            }
+
+            bool ISurrogateProvider.Handles(Type type, StreamingContext context, out int priority)
+            {
+                bool handles = type == typeof(JObject);
+                priority = handles ? this.priority : 0;
+                return handles;
+            }
+
+            void ISerializationSurrogate.GetObjectData(object obj, SerializationInfo info, StreamingContext context)
+            {
+                var instance = (JObject) obj;
+                info.AddValue(typeof(JObject).Name, instance.ToString(Newtonsoft.Json.Formatting.None));
+            }
+
+            object ISerializationSurrogate.SetObjectData(object obj, SerializationInfo info, StreamingContext context, ISurrogateSelector selector)
+            {
+                return obj = JObject.Parse((string)info.GetValue(typeof(JObject).Name, typeof(string)));
             }
         }
 
@@ -229,25 +291,6 @@ namespace Microsoft.Bot.Builder.Internals.Fibers
                     selector = null;
                     return null;
                 }
-            }
-        }
-        public sealed class SimpleServiceLocator : IServiceProvider
-        {
-            private readonly Dictionary<Type, object> instanceByType;
-
-            public SimpleServiceLocator(IEnumerable<object> instances)
-            {
-                this.instanceByType = instances.ToDictionary(o => o.GetType(), o => o);
-            }
-            object IServiceProvider.GetService(Type serviceType)
-            {
-                object service;
-                if (this.instanceByType.TryGetValue(serviceType, out service))
-                {
-                    return service;
-                }
-
-                return null;
             }
         }
     }

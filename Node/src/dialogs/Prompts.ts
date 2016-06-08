@@ -32,16 +32,19 @@
 //
 
 import dialog = require('./Dialog');
-import session = require('../Session');
+import ses = require('../Session');
 import consts = require('../consts');
 import entities = require('./EntityRecognizer');
+import mb = require('../Message');
+import Channel = require('../Channel');
+import dc = require('./DialogCollection');
 
-export enum PromptType { text, number, confirm, choice, time }
+export enum PromptType { text, number, confirm, choice, time, attachment }
 
-export enum ListStyle { none, inline, list }
+export enum ListStyle { none, inline, list, button, auto }
 
 export interface IPromptOptions {
-    retryPrompt?: string;
+    retryPrompt?: string | string[] | IMessage;
     maxRetries?: number;
     refDate?: number;
     listStyle?: ListStyle;
@@ -49,7 +52,7 @@ export interface IPromptOptions {
 
 export interface IPromptArgs extends IPromptOptions {
     promptType: PromptType;
-    prompt: string;
+    prompt: string | string[] | IMessage;
     enumValues?: string[];
 }
 
@@ -69,6 +72,7 @@ export interface IPromptRecognizerArgs {
     promptType: PromptType;
     language: string;
     utterance: string;
+    attachments: IAttachment[];
     enumValues?: string[];
     refDate?: number;
     compareConfidence(language: string, utterance: string, score: number, callback: (handled: boolean) => void): void;
@@ -87,7 +91,7 @@ export interface IChronoDuration extends IEntity {
 }
 
 export class SimplePromptRecognizer implements IPromptRecognizer {
-    private cancelExp = /^(cancel|nevermind|never mind|back|stop|forget it)/i;
+    private cancelExp = /^(cancel|nevermind|never mind|stop|forget it|quit)/i;
 
     public recognize(args: IPromptRecognizerArgs, callback: (result: IPromptRecognizerResult<any>) => void, session?: ISession): void {
         this.checkCanceled(args, () => {
@@ -97,6 +101,7 @@ export class SimplePromptRecognizer implements IPromptRecognizer {
                 var response: any;
                 var text = args.utterance.trim();
                 switch (args.promptType) {
+                    default:
                     case PromptType.text:
                         // This is an open ended question so it's a little tricky to know what to pass as a confidence
                         // score. Currently we're saying that we have 0.1 confidence that we understand the users intent
@@ -114,6 +119,13 @@ export class SimplePromptRecognizer implements IPromptRecognizer {
                         break;
                     case PromptType.confirm:
                         var b = entities.EntityRecognizer.parseBoolean(text);
+                        if (typeof b !== 'boolean') {
+                            var n = entities.EntityRecognizer.parseNumber(text);
+                            if (!isNaN(n) && n > 0 && n <= 2) {
+                                b = (n === 1);
+                            }
+                            
+                        }
                         if (typeof b == 'boolean') {
                             score = 1.0;
                             response = b;
@@ -131,7 +143,7 @@ export class SimplePromptRecognizer implements IPromptRecognizer {
                         if (!best) {
                             var n = entities.EntityRecognizer.parseNumber(text);
                             if (!isNaN(n) && n > 0 && n <= args.enumValues.length) {
-                                best = { index: n, entity: args.enumValues[n - 1], score: 1.0 };
+                                best = { index: n - 1, entity: args.enumValues[n - 1], score: 1.0 };
                             }
                         }
                         if (best) {
@@ -139,7 +151,12 @@ export class SimplePromptRecognizer implements IPromptRecognizer {
                             response = best;
                         }
                         break;
-                    default:
+                    case PromptType.attachment:
+                        if (args.attachments && args.attachments.length > 0) {
+                            score = 1.0;
+                            response = args.attachments;
+                        }
+                        break;
                 }
 
                 // Return results
@@ -169,8 +186,16 @@ export class Prompts extends dialog.Dialog {
     private static options: IPromptsOptions = {
         recognizer: new SimplePromptRecognizer()
     };
+    private static defaultRetryPrompt = {
+        text: "I didn't understand. Please try again.",
+        number: "I didn't recognize that as a number. Please enter a number.",
+        confirm: "I didn't understand. Please answer 'yes' or 'no'.",
+        choice: "I didn't understand. Please choose an option from the list.", 
+        time: "I didn't recognize the time you entered. Please try again.", 
+        attachment: "I didn't receive a file. Please try again."  
+    };
 
-    public begin(session: ISession, args: IPromptArgs): void {
+    public begin(session: ses.Session, args: IPromptArgs): void {
         args = <any>args || {};
         args.maxRetries = args.maxRetries || 1; 
         for (var key in args) {
@@ -178,16 +203,17 @@ export class Prompts extends dialog.Dialog {
                 session.dialogData[key] = (<any>args)[key];
             }
         }
-        session.send(args.prompt);
+        this.sendPrompt(session, args);
     }
 
-    public replyReceived(session: ISession): void {
+    public replyReceived(session: ses.Session): void {
         var args: IPromptArgs = session.dialogData;
         Prompts.options.recognizer.recognize(
             {
                 promptType: args.promptType,
                 utterance: session.message.text,
                 language: session.message.language,
+                attachments: session.message.attachments,
                 enumValues: args.enumValues,
                 refDate: args.refDate,
                 compareConfidence: function (language, utterance, score, callback) {
@@ -201,10 +227,91 @@ export class Prompts extends dialog.Dialog {
                         session.endDialog(result);
                     } else {
                         args.maxRetries--;
-                        session.send(args.retryPrompt || "I didn't understand. " + args.prompt);
+                        this.sendPrompt(session, args, true);
                     }
                 }
             });
+    }
+    
+    private sendPrompt(session: ses.Session, args: IPromptArgs, retry = false): void {
+        if (retry && typeof args.retryPrompt === 'object' && !Array.isArray(args.retryPrompt)) {
+            // Send native IMessage
+            session.send(args.retryPrompt);            
+        } else if (typeof args.prompt === 'object' && !Array.isArray(args.prompt)) {
+            // Send native IMessage
+            session.send(args.prompt);            
+        } else {
+            // Calculate list style.
+            var style = ListStyle.none;
+            if (args.promptType == PromptType.choice || args.promptType == PromptType.confirm) {
+                style = args.listStyle;
+                if (style == ListStyle.auto) {
+                    if (Channel.preferButtons(session, args.enumValues.length, retry)) {
+                        style = ListStyle.button;
+                    } else if (!retry) {
+                        style = args.enumValues.length < 3 ? ListStyle.inline : ListStyle.list;
+                    } else {
+                        style = ListStyle.none;
+                    }
+                }
+            }
+            
+            // Get message message
+            var prompt: string;
+            if (retry) {
+                if (args.retryPrompt) {
+                    prompt = mb.Message.randomPrompt(<any>args.retryPrompt);
+                } else {
+                    var type = PromptType[args.promptType];
+                    prompt = mb.Message.randomPrompt((<any>Prompts.defaultRetryPrompt)[type]);
+                }
+            } else {
+                prompt = mb.Message.randomPrompt(<any>args.prompt);
+            }
+            
+            // Append list
+            var connector = '';
+            var list: string;
+            var msg = new mb.Message();
+            switch (style) {
+                case ListStyle.button:
+                    var a: IAttachment = { actions: [] };
+                    for (var i = 0; i < session.dialogData.enumValues.length; i++) {
+                        var action = session.dialogData.enumValues[i];
+                        a.actions.push({ title: action, message: action });
+                    }
+                    msg.setText(session, prompt)
+                       .addAttachment(a);
+                    break;
+                case ListStyle.inline:
+                    list = ' (';
+                    args.enumValues.forEach((value, index) => {
+                        list += connector + (index + 1) + '. ' + value;
+                        if (index == args.enumValues.length - 2) {
+                            connector = index == 0 ? ' or ' : ', or ';
+                        } else {
+                            connector = ', ';
+                        } 
+                    });
+                    list += ')';
+                    msg.setText(session, prompt + '%s', list);
+                    break;
+                case ListStyle.list:
+                    list = '\n   ';
+                    args.enumValues.forEach((value, index) => {
+                        list += connector + (index + 1) + '. ' + value;
+                        connector = '\n   ';
+                    });
+                    msg.setText(session, prompt + '%s', list);
+                    break;
+                default:
+                    msg.setText(session, prompt);
+                    break;
+            }
+            
+            // Send message
+            session.send(msg);
+        }
     }
 
     static configure(options: IPromptsOptions): void {
@@ -217,72 +324,54 @@ export class Prompts extends dialog.Dialog {
         }
     }
 
-    static text(ses: session.Session, prompt: string): void {
-        beginPrompt(ses, {
+    static text(session: ses.Session, prompt: string|string[]|IMessage): void {
+        beginPrompt(session, {
             promptType: PromptType.text,
             prompt: prompt
         });
     }
 
-    static number(ses: session.Session, prompt: string, options?: IPromptOptions): void {
+    static number(session: ses.Session, prompt: string|string[]|IMessage, options?: IPromptOptions): void {
         var args: IPromptArgs = <any>options || {};
         args.promptType = PromptType.number;
         args.prompt = prompt;
-        beginPrompt(ses, args);
+        beginPrompt(session, args);
     }
 
-    static confirm(ses: session.Session, prompt: string, options?: IPromptOptions): void {
+    static confirm(session: ses.Session, prompt: string|string[]|IMessage, options?: IPromptOptions): void {
         var args: IPromptArgs = <any>options || {};
         args.promptType = PromptType.confirm;
         args.prompt = prompt;
-        beginPrompt(ses, args);
+        args.enumValues = ['yes','no'];
+        args.listStyle = args.hasOwnProperty('listStyle') ? args.listStyle : ListStyle.auto;
+        beginPrompt(session, args);
     }
 
-    static choice(ses: session.Session, prompt: string, choices: string, options?: IPromptOptions): void;
-    static choice(ses: session.Session, prompt: string, choices: Object, options?: IPromptOptions): void;
-    static choice(ses: session.Session, prompt: string, choices: string[], options?: IPromptOptions): void;
-    static choice(ses: session.Session, prompt: string, choices: any, options?: IPromptOptions): void {
+    static choice(session: ses.Session, prompt: string|string[]|IMessage, choices: string|Object|string[], options?: IPromptOptions): void {
         var args: IPromptArgs = <any>options || {};
         args.promptType = PromptType.choice;
         args.prompt = prompt;
+        args.listStyle = args.hasOwnProperty('listStyle') ? args.listStyle : ListStyle.auto;
         args.enumValues = entities.EntityRecognizer.expandChoices(choices);
-        args.listStyle = args.listStyle || ListStyle.list;
-        
-        // Format list
-        var connector = '', list: string;
-        switch (args.listStyle) {
-            case ListStyle.list:
-                list = '\n   ';
-                args.enumValues.forEach((value, index) => {
-                    list += connector + (index + 1) + '. ' + value;
-                    connector = '\n   ';
-                });
-                args.prompt += list;
-                break;
-            case ListStyle.inline:
-                list = ' ';
-                args.enumValues.forEach((value, index) => {
-                    list += connector + (index + 1) + '. ' + value;
-                    if (index == args.enumValues.length - 2) {
-                        connector = index == 0 ? ' or ' : ', or ';
-                    } else {
-                        connector = ', ';
-                    } 
-                });
-                args.prompt += list;
-                break;
-        }
-        beginPrompt(ses, args);
+        beginPrompt(session, args);
     }
 
-    static time(ses: session.Session, prompt: string, options?: IPromptOptions): void {
+    static time(session: ses.Session, prompt: string|string[]|IMessage, options?: IPromptOptions): void {
         var args: IPromptArgs = <any>options || {};
         args.promptType = PromptType.time;
         args.prompt = prompt;
-        beginPrompt(ses, args);
+        beginPrompt(session, args);
+    }
+    
+    static attachment(session: ses.Session, prompt: string|string[]|IMessage, options?: IPromptOptions): void {
+        var args: IPromptArgs = <any>options || {};
+        args.promptType = PromptType.attachment;
+        args.prompt = prompt;
+        beginPrompt(session, args);
     }
 }
+dc.systemDialogs[consts.DialogId.Prompts] = new Prompts();
 
-function beginPrompt(ses: session.Session, args: IPromptArgs) {
-    ses.beginDialog(consts.DialogId.Prompts, args);
+function beginPrompt(session: ses.Session, args: IPromptArgs) {
+    session.beginDialog(consts.DialogId.Prompts, args);
 }

@@ -41,6 +41,7 @@ using Microsoft.VisualStudio.TestTools.UnitTesting;
 using Moq;
 using Microsoft.Bot.Builder.Luis;
 using Microsoft.Bot.Builder.Dialogs;
+using Microsoft.Bot.Builder.Luis.Models;
 
 namespace Microsoft.Bot.Builder.Tests
 {
@@ -129,6 +130,19 @@ namespace Microsoft.Bot.Builder.Tests
             var service = new Mock<ILuisService>();
             var dialog = new InvalidLuisDialog(service.Object);
             var handlers = LuisDialog.EnumerateHandlers(dialog).ToArray();
+        }
+
+        [TestMethod]
+        public void UrlEncoding_UTF8_Then_Hex()
+        {
+            ILuisService service = new LuisService(new LuisModelAttribute("modelID", "subscriptionID"));
+
+            var uri = service.BuildUri("Français");
+
+            // https://github.com/Microsoft/BotBuilder/issues/247
+            // https://github.com/Microsoft/BotBuilder/pull/76
+            Assert.AreNotEqual("https://api.projectoxford.ai/luis/v1/application?id=modelID&subscription-key=subscriptionID&q=Fran%25u00e7ais", uri.AbsoluteUri);
+            Assert.AreEqual("https://api.projectoxford.ai/luis/v1/application?id=modelID&subscription-key=subscriptionID&q=Fran%C3%A7ais", uri.AbsoluteUri);
         }
     }
 }

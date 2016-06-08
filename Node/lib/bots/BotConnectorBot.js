@@ -13,7 +13,7 @@ var BotConnectorBot = (function (_super) {
     function BotConnectorBot(options) {
         _super.call(this);
         this.options = {
-            endpoint: process.env['endpoint'] || 'https://api.botframework.com',
+            endpoint: process.env['endpoint'],
             appId: process.env['appId'] || '',
             appSecret: process.env['appSecret'] || '',
             defaultDialogId: '/',
@@ -148,9 +148,16 @@ var BotConnectorBot = (function (_super) {
                     };
                     data.perUserConversationData[consts.Data.SessionState] = ses.sessionState;
                     _this.saveData(userId, sessionId, data, reply, function (err) {
+                        var endpoint;
+                        if (ses.message.to.channelId == 'emulator') {
+                            endpoint = _this.options.endpoint || 'http://localhost:9000';
+                        }
+                        else {
+                            endpoint = _this.options.endpoint || 'https://api.botframework.com';
+                        }
                         if (res) {
                             _this.emit('reply', reply);
-                            res.send(200, reply);
+                            res.status(200).send(reply);
                             res = null;
                         }
                         else if (ses.message.conversationId) {
@@ -162,10 +169,16 @@ var BotConnectorBot = (function (_super) {
                             reply.channelMessageId = ses.message.channelMessageId;
                             reply.participants = ses.message.participants;
                             reply.totalParticipants = ses.message.totalParticipants;
+                            if (!reply.language && ses.message.language) {
+                                reply.language = ses.message.language;
+                            }
                             _this.emit('reply', reply);
-                            post(_this.options, '/bot/v1.0/messages', reply, function (err) {
+                            post(_this.options, endpoint, '/bot/v1.0/messages', reply, function (err, response) {
                                 if (err) {
                                     _this.emit('error', err);
+                                }
+                                else if (response.statusCode >= 400) {
+                                    console.error(response.statusMessage);
                                 }
                             });
                         }
@@ -173,9 +186,12 @@ var BotConnectorBot = (function (_super) {
                             reply.from = ses.message.from;
                             reply.to = ses.message.to;
                             _this.emit('send', reply);
-                            post(_this.options, '/bot/v1.0/messages', reply, function (err) {
+                            post(_this.options, endpoint, '/bot/v1.0/messages', reply, function (err, response) {
                                 if (err) {
                                     _this.emit('error', err);
+                                }
+                                else if (response.statusCode >= 400) {
+                                    console.error(response.statusMessage);
                                 }
                             });
                         }
@@ -217,13 +233,13 @@ var BotConnectorBot = (function (_super) {
             else if (res) {
                 var msg;
                 switch (message.type) {
-                    case "botAddedToConversation":
+                    case "BotAddedToConversation":
                         msg = this.options.groupWelcomeMessage;
                         break;
-                    case "userAddedToConversation":
+                    case "UserAddedToConversation":
                         msg = this.options.userWelcomeMessage;
                         break;
-                    case "endOfConversation":
+                    case "EndOfConversation":
                         msg = this.options.goodbyeMessage;
                         break;
                 }
@@ -310,10 +326,10 @@ var BotConnectorSession = (function (_super) {
     return BotConnectorSession;
 })(session.Session);
 exports.BotConnectorSession = BotConnectorSession;
-function post(settings, path, body, callback) {
+function post(settings, endpoint, path, body, callback) {
     var options = {
         method: 'POST',
-        url: settings.endpoint + path,
+        url: endpoint + path,
         body: body,
         json: true
     };

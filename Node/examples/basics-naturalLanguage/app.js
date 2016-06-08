@@ -5,7 +5,7 @@ notifications or start a new conversation with the user.
 
 For a complete walkthrough of creating this bot see the article below.
 
-    http://docs.botframework.com/builder/node/understanding-natural-language/
+    http://docs.botframework.com/builder/node/guides/understanding-natural-language/
 
 -----------------------------------------------------------------------------*/
 
@@ -28,10 +28,6 @@ dialog.on('builtin.intent.alarm.set_alarm', [
           timestamp: time ? time.getTime() : null  
         };
         
-        if (time) {
-            var diff = time.getTime() - new Date().getTime();
-        }
-        
         // Prompt for title
         if (!alarm.title) {
             builder.Prompts.text(session, 'What would you like to call your alarm?');
@@ -44,7 +40,7 @@ dialog.on('builtin.intent.alarm.set_alarm', [
         if (results.response) {
             alarm.title = results.response;
         }
-        
+
         // Prompt for time (title will be blank if the user said cancel)
         if (alarm.title && !alarm.timestamp) {
             builder.Prompts.time(session, 'What time would you like to set the alarm for?');
@@ -111,8 +107,8 @@ dialog.onDefault(builder.DialogAction.send("I'm sorry I didn't understand. I can
 
 // Add notification dialog
 cortanaBot.add('/notify', function (session, alarm) {
-   session.send("Here's your '%s' alarm.", alarm.title);
-   session.endDialog(); // <= we don't want replies coming to us 
+    // We don't want replies coming to us so we'll use endDialog() instead of send()
+    session.endDialog("Here's your '%s' alarm.", alarm.title);
 });
 
 cortanaBot.listenStdin();

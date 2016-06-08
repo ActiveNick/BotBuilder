@@ -37,6 +37,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Bot.Builder.Dialogs.Internals
@@ -55,25 +56,89 @@ namespace Microsoft.Bot.Builder.Dialogs.Internals
 
     public sealed class DetectEmulatorFactory : IConnectorClientFactory
     {
-        private readonly Message message;
         private readonly Uri emulator;
-        public DetectEmulatorFactory(Message message, Uri emulator)
+        private readonly bool? isEmulator;
+        private readonly ConnectorClientCredentials credentials;
+        public DetectEmulatorFactory(Message message, Uri emulator, ConnectorClientCredentials credentials)
         {
-            SetField.NotNull(out this.message, nameof(message), message);
+            SetField.CheckNull(nameof(message), message);
+            var channel = message.From;
+            this.isEmulator = channel?.ChannelId?.Equals("emulator", StringComparison.OrdinalIgnoreCase);
             SetField.NotNull(out this.emulator, nameof(emulator), emulator);
+            SetField.NotNull(out this.credentials, nameof(credentials), credentials);
         }
+
         IConnectorClient IConnectorClientFactory.Make()
         {
-            var channel = this.message.From;
-            var isEmulator = channel?.ChannelId?.Equals("emulator", StringComparison.OrdinalIgnoreCase);
             if (isEmulator ?? false)
             {
-                return new ConnectorClient(this.emulator, new ConnectorClientCredentials());
+                return new ConnectorClient(this.emulator, this.credentials);
             }
             else
             {
-                return new ConnectorClient();
+                var client = new ConnectorClient();
+                client.Credentials = this.credentials;
+                return client;
             }
+        }
+    }
+
+    /// <summary>
+    /// connector client extensions.
+    /// </summary>
+    public static partial class Extensions
+    {
+        /// <summary>
+        /// Loads the message data from connector. 
+        /// </summary>
+        /// <param name="client"> Instance of connector client.</param>
+        /// <param name="botId"> Id of the bot.</param>
+        /// <param name="userId"> Id of the user.</param>
+        /// <param name="conversationId"> Id of the conversation.</param>
+        /// <param name="token"> The cancellation token.</param>
+        /// <returns> A message with appropriate data fields.</returns>
+        public static async Task<Message> LoadMessageData(this IConnectorClient client, string botId, string userId, string conversationId, CancellationToken token = default(CancellationToken))
+        {
+            var continuationMessage = new Message
+            {
+                ConversationId = conversationId,
+                To = new ChannelAccount
+                {
+                    Id = botId
+                },
+                From = new ChannelAccount
+                {
+                    Id = userId
+                }
+            };
+            return await client.LoadMessageData(continuationMessage, token);
+        }
+
+        /// <summary>
+        /// Loads the message data from connector.
+        /// </summary>
+        /// <param name="client"> The connector client.</param>
+        /// <param name="continuationMessage"> The continuation message based on <see cref="ResumptionCookie"/>.</param>
+        /// <param name="token"> The cancellation token.</param>
+        /// <returns> A message with appropriate data fields.</returns>
+        public static async Task<Message> LoadMessageData(this IConnectorClient client, Message continuationMessage, CancellationToken token = default(CancellationToken))
+        {
+            var botId = continuationMessage.To.Id;
+            var userId = continuationMessage.From.Id;
+            var conversationId = continuationMessage.ConversationId; 
+            var dataRetrievalTasks = new List<Task<BotData>> {
+                client.Bots.GetConversationDataAsync(botId, conversationId, token),
+                client.Bots.GetUserDataAsync(botId, userId, token),
+                client.Bots.GetPerUserConversationDataAsync(botId, conversationId, userId, token)
+            };
+
+            await Task.WhenAll(dataRetrievalTasks);
+
+            continuationMessage.BotConversationData = dataRetrievalTasks[0].Result?.Data;
+            continuationMessage.BotUserData = dataRetrievalTasks[1].Result?.Data;
+            continuationMessage.BotPerUserInConversationData = dataRetrievalTasks[2].Result?.Data;
+
+            return continuationMessage;
         }
     }
 }

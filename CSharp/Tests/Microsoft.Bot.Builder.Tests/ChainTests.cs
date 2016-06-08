@@ -33,42 +33,31 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
-using System.Text;
+using System.Runtime.Serialization;
+using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 
-using Microsoft.VisualStudio.TestTools.UnitTesting;
-
 using Microsoft.Bot.Builder.Dialogs;
-using Microsoft.Bot.Connector;
-using Autofac;
 using Microsoft.Bot.Builder.Dialogs.Internals;
 using Microsoft.Bot.Builder.Internals.Fibers;
+using Microsoft.Bot.Connector;
+
+using Autofac;
+
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Microsoft.Bot.Builder.Tests
 {
     [TestClass]
-    public sealed class ChainTests
+    public sealed class ChainTests : DialogTestBase
     {
-        public static IContainer Build()
+        public static void AssertQueryText(string expectedText, ILifetimeScope container)
         {
-            var builder = new ContainerBuilder();
-            builder.RegisterModule(new DialogModule());
-            builder.RegisterModule(new ReflectionSurrogateModule());
-            builder
-                .RegisterType<BotToUserQueue>()
-                .Keyed<IBotToUser>(FiberModule.Key_DoNotSerialize)
-                .AsSelf()
-                .As<IBotToUser>()
-                .SingleInstance();
-
-            return builder.Build();
-        }
-
-        public static void AssertQueryText(string expectedText, IContainer container)
-        {
-            var queue = container.Resolve<BotToUserQueue>();
-            var texts = queue.Messages.Select(m => m.Text).ToArray();
+            var queue = container.Resolve<Queue<Message>>();
+            var texts = queue.Select(m => m.Text).ToArray();
             // last message is re-prompt, next-to-last is result of query expression
             var actualText = texts.Reverse().ElementAt(1);
             Assert.AreEqual(expectedText, actualText);
@@ -89,27 +78,26 @@ namespace Microsoft.Bot.Builder.Tests
         }
 
         [TestMethod]
-        public async Task SelectMany()
+        public async Task LinqQuerySyntax_SelectMany()
         {
-            var toBot = new Message()
-            {
-                ConversationId = Guid.NewGuid().ToString()
-            };
+            var toBot = MakeTestMessage();
 
-            var words = new [] { "hello", "world", "!" };
+            var words = new[] { "hello", "world", "!" };
 
-            using (var container = Build())
+            using (var container = Build(Options.Reflection))
             {
                 foreach (var word in words)
                 {
-                    using (var scope = container.BeginLifetimeScope())
+                    using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
                     {
-                        var store = scope.Resolve<IDialogContextStore>(TypedParameter.From(toBot));
+                        DialogModule_MakeRoot.Register(scope, MakeSelectManyQuery);
+
+                        var task = scope.Resolve<IPostToBot>();
                         toBot.Text = word;
                         // if we inline the query from MakeQuery into this method, and we use an anonymous method to return that query as MakeRoot
                         // then because in C# all anonymous functions in the same method capture all variables in that method, query will be captured
                         // with the linq anonymous methods, and the serializer gets confused trying to deserialize it all.
-                        await store.PostAsync(toBot, MakeSelectManyQuery);
+                        await task.PostAsync(toBot, CancellationToken.None);
                     }
                 }
 
@@ -132,26 +120,137 @@ namespace Microsoft.Bot.Builder.Tests
         }
 
         [TestMethod]
-        public async Task Select()
+        public async Task LinqQuerySyntax_Select()
         {
             const string Phrase = "hello world";
 
-            using (var container = Build())
+            using (var container = Build(Options.Reflection))
             {
-                using (var scope = container.BeginLifetimeScope())
+                var toBot = MakeTestMessage();
+                toBot.Text = Phrase;
+                
+                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
                 {
-                    var toBot = new Message()
-                    {
-                        ConversationId = Guid.NewGuid().ToString(),
-                        Text = Phrase
-                    };
+                    DialogModule_MakeRoot.Register(scope, MakeSelectQuery);
 
-                    var store = scope.Resolve<IDialogContextStore>(TypedParameter.From(toBot));
-                    await store.PostAsync(toBot, MakeSelectQuery);
+                    var task = scope.Resolve<IPostToBot>();
+                    await task.PostAsync(toBot, CancellationToken.None);
                 }
 
                 var expected = new string(Phrase.Reverse().ToArray());
                 AssertQueryText(expected, container);
+            }
+        }
+
+        [TestMethod]
+        public async Task LinqQuerySyntax_Where_True()
+        {
+            var query = Chain.PostToChain().Select(m => m.Text).Where(text => text == true.ToString()).PostToUser();
+
+            using (var container = Build(Options.Reflection))
+            {
+                var toBot = MakeTestMessage();
+                toBot.Text = true.ToString();
+                
+                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
+                {
+                    DialogModule_MakeRoot.Register(scope, () => query);
+
+                    var task = scope.Resolve<IPostToBot>();
+                    await task.PostAsync(toBot, CancellationToken.None);
+                }
+
+                var queue = container.Resolve<Queue<Message>>();
+                var texts = queue.Select(m => m.Text).ToArray();
+                Assert.AreEqual(1, texts.Length);
+                Assert.AreEqual(true.ToString(), texts[0]);
+            }
+        }
+
+        [TestMethod]
+        public async Task LinqQuerySyntax_Where_False()
+        {
+            var query = Chain.PostToChain().Select(m => m.Text).Where(text => text == true.ToString()).PostToUser();
+
+            using (var container = Build(Options.Reflection))
+            {
+                var toBot = MakeTestMessage();
+                toBot.Text = false.ToString();
+                
+                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
+                {
+                    DialogModule_MakeRoot.Register(scope, () => query);
+
+                    var task = scope.Resolve<IPostToBot>();
+                    try
+                    {
+                        await task.PostAsync(toBot, CancellationToken.None);
+                        Assert.Fail();
+                    }
+                    catch (Chain.WhereCanceledException)
+                    {
+                    }
+                }
+
+                var queue = container.Resolve<Queue<Message>>();
+                var texts = queue.Select(m => m.Text).ToArray();
+                Assert.AreEqual(0, texts.Length);
+            }
+        }
+
+        public static IDialog<string> MakeSwitchDialog()
+        {
+            var toBot = from message in Chain.PostToChain() select message.Text;
+
+            var logic =
+                toBot
+                .Switch
+                (
+                    new RegexCase<string>(new Regex("^hello"), (context, text) =>
+                    {
+                        return "world!";
+                    }),
+                    new Case<string, string>((txt) => txt == "world", (context, text) =>
+                    {
+                        return "!";
+                    }),
+                    new DefaultCase<string, string>((context, text) =>
+                   {
+                       return text;
+                   }
+                )
+            );
+
+            var toUser = logic.PostToUser();
+
+            return toUser;
+        }
+
+        [TestMethod]
+        public async Task Switch_Case()
+        {
+            var toBot = MakeTestMessage();
+
+            var words = new[] { "hello", "world", "echo" };
+            var expectedReply = new[] { "world!", "!", "echo" };
+
+            using (var container = Build(Options.Reflection))
+            {
+                foreach (var word in words)
+                {
+                    using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
+                    {
+                        DialogModule_MakeRoot.Register(scope, MakeSwitchDialog);
+
+                        var task = scope.Resolve<IPostToBot>();
+                        toBot.Text = word;
+                        await task.PostAsync(toBot, CancellationToken.None);
+                    }
+                }
+
+                var queue = container.Resolve<Queue<Message>>();
+                var texts = queue.Select(m => m.Text).ToArray();
+                CollectionAssert.AreEqual(expectedReply, texts);
             }
         }
 
@@ -163,29 +262,137 @@ namespace Microsoft.Bot.Builder.Tests
         }
 
         [TestMethod]
-        public async Task Unwrap()
+        public async Task Linq_Unwrap()
         {
-            var toBot = new Message()
-            {
-                ConversationId = Guid.NewGuid().ToString()
-            };
+            var toBot = MakeTestMessage();
 
             var words = new[] { "hello", "world" };
 
-            using (var container = Build())
+            using (var container = Build(Options.Reflection))
             {
                 foreach (var word in words)
                 {
-                    using (var scope = container.BeginLifetimeScope())
+                    using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
                     {
-                        var store = scope.Resolve<IDialogContextStore>(TypedParameter.From(toBot));
+                        DialogModule_MakeRoot.Register(scope, MakeUnwrapQuery);
+
+                        var task = scope.Resolve<IPostToBot>();
                         toBot.Text = word;
-                        await store.PostAsync(toBot, MakeUnwrapQuery);
+                        await task.PostAsync(toBot, CancellationToken.None);
                     }
                 }
 
                 var expected = words.Last();
                 AssertQueryText(expected, container);
+            }
+        }
+
+        [TestMethod]
+        public async Task LinqQuerySyntax_Without_Reflection_Surrogate()
+        {
+            // no environment capture in closures here
+            var query = from x in new PromptDialog.PromptString("p1", "p1", 1)
+                        from y in new PromptDialog.PromptString("p2", "p2", 1)
+                        select string.Join(" ", x, y);
+
+            query = query.PostToUser();
+
+            var words = new[] { "hello", "world" };
+
+            using (var container = Build(Options.None))
+            {
+                var toBot = MakeTestMessage();
+
+                foreach (var word in words)
+                {
+                    using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
+                    {
+                        DialogModule_MakeRoot.Register(scope, () => query);
+
+                        var task = scope.Resolve<IPostToBot>();
+                        toBot.Text = word;
+                        await task.PostAsync(toBot, CancellationToken.None);
+                    }
+                }
+
+                var expected = string.Join(" ", words);
+                AssertQueryText(expected, container);
+            }
+        }
+
+        [TestMethod]
+        [ExpectedException(typeof(ClosureCaptureException))]
+        public async Task LinqQuerySyntax_Throws_ClosureCaptureException()
+        {
+            var prompts = new[] { "p1", "p2" };
+            var query = new PromptDialog.PromptString(prompts[0], prompts[0], attempts: 1).Select(p => new PromptDialog.PromptString(prompts[1], prompts[1], attempts: 1)).Unwrap().PostToUser();
+
+            using (var container = Build(Options.None))
+            {
+                var formatter = container.Resolve<IFormatter>();
+                using (var stream = new MemoryStream())
+                {
+                    formatter.Serialize(stream, query);
+                }
+            }
+        }
+
+        [TestMethod]
+        public async Task SampleChain_Joke()
+        {
+            var joke = Chain
+                .PostToChain()
+                .Select(m => m.Text)
+                .Switch
+                (
+                    Chain.Case
+                    (
+                        new Regex("^chicken"),
+                        (context, text) =>
+                            Chain
+                            .Return("why did the chicken cross the road?")
+                            .PostToUser()
+                            .WaitToBot()
+                            .Select(ignoreUser => "to get to the other side")
+                    ),
+                    Chain.Default<string, IDialog<string>>(
+                        (context, text) =>
+                            Chain
+                            .Return("why don't you like chicken jokes?")
+                    )
+                )
+                .Unwrap()
+                .PostToUser().
+                Loop();
+
+            using (var container = Build(Options.None))
+            {
+                var toBot = MakeTestMessage();
+
+                var toBotTexts = new[]
+                {
+                    "chicken",
+                    "i don't know",
+                    "anything but chickens"
+                };
+
+                foreach (var word in toBotTexts)
+                {
+                    using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
+                    {
+                        DialogModule_MakeRoot.Register(scope, () => joke);
+
+                        var task = scope.Resolve<IPostToBot>();
+                        toBot.Text = word;
+                        await task.PostAsync(toBot, CancellationToken.None);
+                    }
+                }
+
+                var queue = container.Resolve<Queue<Message>>();
+                var texts = queue.Select(m => m.Text).ToArray();
+                Assert.AreEqual("why did the chicken cross the road?", texts[0]);
+                Assert.AreEqual("to get to the other side", texts[1]);
+                Assert.AreEqual("why don't you like chicken jokes?", texts[2]);
             }
         }
     }

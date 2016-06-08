@@ -6,23 +6,29 @@ var __extends = (this && this.__extends) || function (d, b) {
 var dialog = require('./Dialog');
 var consts = require('../consts');
 var entities = require('./EntityRecognizer');
+var mb = require('../Message');
+var Channel = require('../Channel');
+var dc = require('./DialogCollection');
 (function (PromptType) {
     PromptType[PromptType["text"] = 0] = "text";
     PromptType[PromptType["number"] = 1] = "number";
     PromptType[PromptType["confirm"] = 2] = "confirm";
     PromptType[PromptType["choice"] = 3] = "choice";
     PromptType[PromptType["time"] = 4] = "time";
+    PromptType[PromptType["attachment"] = 5] = "attachment";
 })(exports.PromptType || (exports.PromptType = {}));
 var PromptType = exports.PromptType;
 (function (ListStyle) {
     ListStyle[ListStyle["none"] = 0] = "none";
     ListStyle[ListStyle["inline"] = 1] = "inline";
     ListStyle[ListStyle["list"] = 2] = "list";
+    ListStyle[ListStyle["button"] = 3] = "button";
+    ListStyle[ListStyle["auto"] = 4] = "auto";
 })(exports.ListStyle || (exports.ListStyle = {}));
 var ListStyle = exports.ListStyle;
 var SimplePromptRecognizer = (function () {
     function SimplePromptRecognizer() {
-        this.cancelExp = /^(cancel|nevermind|never mind|back|stop|forget it)/i;
+        this.cancelExp = /^(cancel|nevermind|never mind|stop|forget it|quit)/i;
     }
     SimplePromptRecognizer.prototype.recognize = function (args, callback, session) {
         this.checkCanceled(args, function () {
@@ -31,6 +37,7 @@ var SimplePromptRecognizer = (function () {
                 var response;
                 var text = args.utterance.trim();
                 switch (args.promptType) {
+                    default:
                     case PromptType.text:
                         score = 0.1;
                         response = text;
@@ -44,6 +51,12 @@ var SimplePromptRecognizer = (function () {
                         break;
                     case PromptType.confirm:
                         var b = entities.EntityRecognizer.parseBoolean(text);
+                        if (typeof b !== 'boolean') {
+                            var n = entities.EntityRecognizer.parseNumber(text);
+                            if (!isNaN(n) && n > 0 && n <= 2) {
+                                b = (n === 1);
+                            }
+                        }
                         if (typeof b == 'boolean') {
                             score = 1.0;
                             response = b;
@@ -61,7 +74,7 @@ var SimplePromptRecognizer = (function () {
                         if (!best) {
                             var n = entities.EntityRecognizer.parseNumber(text);
                             if (!isNaN(n) && n > 0 && n <= args.enumValues.length) {
-                                best = { index: n, entity: args.enumValues[n - 1], score: 1.0 };
+                                best = { index: n - 1, entity: args.enumValues[n - 1], score: 1.0 };
                             }
                         }
                         if (best) {
@@ -69,7 +82,12 @@ var SimplePromptRecognizer = (function () {
                             response = best;
                         }
                         break;
-                    default:
+                    case PromptType.attachment:
+                        if (args.attachments && args.attachments.length > 0) {
+                            score = 1.0;
+                            response = args.attachments;
+                        }
+                        break;
                 }
                 args.compareConfidence(args.language, text, score, function (handled) {
                     if (!handled && score > 0) {
@@ -109,14 +127,16 @@ var Prompts = (function (_super) {
                 session.dialogData[key] = args[key];
             }
         }
-        session.send(args.prompt);
+        this.sendPrompt(session, args);
     };
     Prompts.prototype.replyReceived = function (session) {
+        var _this = this;
         var args = session.dialogData;
         Prompts.options.recognizer.recognize({
             promptType: args.promptType,
             utterance: session.message.text,
             language: session.message.language,
+            attachments: session.message.attachments,
             enumValues: args.enumValues,
             refDate: args.refDate,
             compareConfidence: function (language, utterance, score, callback) {
@@ -131,10 +151,88 @@ var Prompts = (function (_super) {
                 }
                 else {
                     args.maxRetries--;
-                    session.send(args.retryPrompt || "I didn't understand. " + args.prompt);
+                    _this.sendPrompt(session, args, true);
                 }
             }
         });
+    };
+    Prompts.prototype.sendPrompt = function (session, args, retry) {
+        if (retry === void 0) { retry = false; }
+        if (retry && typeof args.retryPrompt === 'object' && !Array.isArray(args.retryPrompt)) {
+            session.send(args.retryPrompt);
+        }
+        else if (typeof args.prompt === 'object' && !Array.isArray(args.prompt)) {
+            session.send(args.prompt);
+        }
+        else {
+            var style = ListStyle.none;
+            if (args.promptType == PromptType.choice || args.promptType == PromptType.confirm) {
+                style = args.listStyle;
+                if (style == ListStyle.auto) {
+                    if (Channel.preferButtons(session, args.enumValues.length, retry)) {
+                        style = ListStyle.button;
+                    }
+                    else if (!retry) {
+                        style = args.enumValues.length < 3 ? ListStyle.inline : ListStyle.list;
+                    }
+                    else {
+                        style = ListStyle.none;
+                    }
+                }
+            }
+            var prompt;
+            if (retry) {
+                if (args.retryPrompt) {
+                    prompt = mb.Message.randomPrompt(args.retryPrompt);
+                }
+                else {
+                    var type = PromptType[args.promptType];
+                    prompt = mb.Message.randomPrompt(Prompts.defaultRetryPrompt[type]);
+                }
+            }
+            else {
+                prompt = mb.Message.randomPrompt(args.prompt);
+            }
+            var connector = '';
+            var list;
+            var msg = new mb.Message();
+            switch (style) {
+                case ListStyle.button:
+                    var a = { actions: [] };
+                    for (var i = 0; i < session.dialogData.enumValues.length; i++) {
+                        var action = session.dialogData.enumValues[i];
+                        a.actions.push({ title: action, message: action });
+                    }
+                    msg.setText(session, prompt)
+                        .addAttachment(a);
+                    break;
+                case ListStyle.inline:
+                    list = ' ';
+                    args.enumValues.forEach(function (value, index) {
+                        list += connector + (index + 1) + '. ' + value;
+                        if (index == args.enumValues.length - 2) {
+                            connector = index == 0 ? ' or ' : ', or ';
+                        }
+                        else {
+                            connector = ', ';
+                        }
+                    });
+                    msg.setText(session, prompt + '%s', list);
+                    break;
+                case ListStyle.list:
+                    list = '\n   ';
+                    args.enumValues.forEach(function (value, index) {
+                        list += connector + (index + 1) + '. ' + value;
+                        connector = '\n   ';
+                    });
+                    msg.setText(session, prompt + '%s', list);
+                    break;
+                default:
+                    msg.setText(session, prompt);
+                    break;
+            }
+            session.send(msg);
+        }
     };
     Prompts.configure = function (options) {
         if (options) {
@@ -145,68 +243,61 @@ var Prompts = (function (_super) {
             }
         }
     };
-    Prompts.text = function (ses, prompt) {
-        beginPrompt(ses, {
+    Prompts.text = function (session, prompt) {
+        beginPrompt(session, {
             promptType: PromptType.text,
             prompt: prompt
         });
     };
-    Prompts.number = function (ses, prompt, options) {
+    Prompts.number = function (session, prompt, options) {
         var args = options || {};
         args.promptType = PromptType.number;
         args.prompt = prompt;
-        beginPrompt(ses, args);
+        beginPrompt(session, args);
     };
-    Prompts.confirm = function (ses, prompt, options) {
+    Prompts.confirm = function (session, prompt, options) {
         var args = options || {};
         args.promptType = PromptType.confirm;
         args.prompt = prompt;
-        beginPrompt(ses, args);
+        args.enumValues = ['yes', 'no'];
+        args.listStyle = args.hasOwnProperty('listStyle') ? args.listStyle : ListStyle.auto;
+        beginPrompt(session, args);
     };
-    Prompts.choice = function (ses, prompt, choices, options) {
+    Prompts.choice = function (session, prompt, choices, options) {
         var args = options || {};
         args.promptType = PromptType.choice;
         args.prompt = prompt;
+        args.listStyle = args.hasOwnProperty('listStyle') ? args.listStyle : ListStyle.auto;
         args.enumValues = entities.EntityRecognizer.expandChoices(choices);
-        args.listStyle = args.listStyle || ListStyle.list;
-        var connector = '', list;
-        switch (args.listStyle) {
-            case ListStyle.list:
-                list = '\n   ';
-                args.enumValues.forEach(function (value, index) {
-                    list += connector + (index + 1) + '. ' + value;
-                    connector = '\n   ';
-                });
-                args.prompt += list;
-                break;
-            case ListStyle.inline:
-                list = ' ';
-                args.enumValues.forEach(function (value, index) {
-                    list += connector + (index + 1) + '. ' + value;
-                    if (index == args.enumValues.length - 2) {
-                        connector = index == 0 ? ' or ' : ', or ';
-                    }
-                    else {
-                        connector = ', ';
-                    }
-                });
-                args.prompt += list;
-                break;
-        }
-        beginPrompt(ses, args);
+        beginPrompt(session, args);
     };
-    Prompts.time = function (ses, prompt, options) {
+    Prompts.time = function (session, prompt, options) {
         var args = options || {};
         args.promptType = PromptType.time;
         args.prompt = prompt;
-        beginPrompt(ses, args);
+        beginPrompt(session, args);
+    };
+    Prompts.attachment = function (session, prompt, options) {
+        var args = options || {};
+        args.promptType = PromptType.attachment;
+        args.prompt = prompt;
+        beginPrompt(session, args);
     };
     Prompts.options = {
         recognizer: new SimplePromptRecognizer()
     };
+    Prompts.defaultRetryPrompt = {
+        text: "I didn't understand. Please try again.",
+        number: "I didn't recognize that as a number. Please enter a number.",
+        confirm: "I didn't understand. Please answer 'yes' or 'no'.",
+        choice: "I didn't understand. Please choose an option from the list.",
+        time: "I didn't recognize the time you entered. Please try again.",
+        attachment: "I didn't receive a file. Please try again."
+    };
     return Prompts;
 })(dialog.Dialog);
 exports.Prompts = Prompts;
-function beginPrompt(ses, args) {
-    ses.beginDialog(consts.DialogId.Prompts, args);
+dc.systemDialogs[consts.DialogId.Prompts] = new Prompts();
+function beginPrompt(session, args) {
+    session.beginDialog(consts.DialogId.Prompts, args);
 }

@@ -43,16 +43,18 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
 
     internal struct StepResult
     {
-        internal StepResult(NextStep next, string feedback, string prompt)
+        internal StepResult(bool success, NextStep next, FormPrompt feedback, FormPrompt prompt)
         {
+            this.Success = success;
             this.Next = next;
             this.Feedback = feedback;
             this.Prompt = prompt;
         }
 
         internal NextStep Next { get; set; }
-        internal string Feedback { get; set; }
-        internal string Prompt { get; set; }
+        internal FormPrompt Feedback { get; set; }
+        internal FormPrompt Prompt { get; set; }
+        internal bool Success { get; set; }
     }
 
     internal interface IStep<T>
@@ -65,17 +67,23 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
 
         IField<T> Field { get; }
 
+        void SaveResources();
+
+        void Localize();
+
         bool Active(T state);
 
-        string Start(IDialogContext context, T state, FormState form);
+        Task<bool> DefineAsync(T state);
+
+        FormPrompt Start(IDialogContext context, T state, FormState form);
 
         IEnumerable<TermMatch> Match(IDialogContext context, T state, FormState form, string input);
 
         Task<StepResult> ProcessAsync(IDialogContext context, T state, FormState form, string input, IEnumerable<TermMatch> matches);
 
-        string NotUnderstood(IDialogContext context, T state, FormState form, string input);
+        FormPrompt NotUnderstood(IDialogContext context, T state, FormState form, string input);
 
-        string Help(T state, FormState form, string commandHelp);
+        FormPrompt Help(T state, FormState form, string commandHelp);
 
         bool Back(IDialogContext context, T state, FormState form);
 

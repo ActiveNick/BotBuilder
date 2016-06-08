@@ -33,32 +33,43 @@
 
 using System;
 using System.Linq;
+using System.Threading;
 using System.Threading.Tasks;
-
-using Microsoft.VisualStudio.TestTools.UnitTesting;
-using Moq;
 
 using Microsoft.Bot.Connector;
 using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Builder.Dialogs.Internals;
 using Microsoft.Bot.Builder.Internals.Fibers;
+
+using Moq;
 using Autofac;
+
+using Microsoft.VisualStudio.TestTools.UnitTesting;
 
 namespace Microsoft.Bot.Builder.Tests
 {
     public abstract class PromptTests_Base : DialogTestBase
     {
-        public interface IPromptCaller<T> : IDialog<T>
+        public interface IPromptCaller<T> : IDialog<object>
         {
             Task FirstMessage(IDialogContext context, IAwaitable<Connector.Message> message);
             Task PromptResult(IDialogContext context, IAwaitable<T> result);
         }
 
-        public static Mock<IPromptCaller<T>> MockDialog<T>(string id = null)
+        public static Mock<IPromptCaller<T>> MockDialog<T>(Action<IDialogContext, ResumeAfter<T>> prompt)
         {
-            var dialog = new Moq.Mock<IPromptCaller<T>>(MockBehavior.Loose);
-            id = id ?? NewID();
-            dialog.Setup(d => d.ToString()).Returns(id);
+            var dialog = new Moq.Mock<IPromptCaller<T>>(MockBehavior.Strict);
+            dialog
+                .Setup(d => d.StartAsync(It.IsAny<IDialogContext>()))
+                .Returns<IDialogContext>(async c => { c.Wait(dialog.Object.FirstMessage); });
+            dialog
+                .Setup(d => d.FirstMessage(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Connector.Message>>()))
+                .Returns<IDialogContext, IAwaitable<object>>(async (c, a) => { prompt(c, dialog.Object.PromptResult); });
+            dialog
+                .Setup(d => d.PromptResult(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<T>>()))
+                .Returns<IDialogContext, IAwaitable<T>>(async (c, a) => { c.Done(default(T)); });
+
+
             return dialog;
         }
     }
@@ -71,36 +82,33 @@ namespace Microsoft.Bot.Builder.Tests
 
         public async Task PromptSuccessAsync<T>(Action<IDialogContext, ResumeAfter<T>> prompt, string text, T expected)
         {
-            var dialogRoot = MockDialog<T>();
+            var dialogRoot = MockDialog<T>(prompt);
 
-            dialogRoot
-                .Setup(d => d.StartAsync(It.IsAny<IDialogContext>()))
-                .Returns<IDialogContext>(async c => { c.Wait(dialogRoot.Object.FirstMessage); });
-            dialogRoot
-                .Setup(d => d.FirstMessage(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Connector.Message>>()))
-                .Returns<IDialogContext, IAwaitable<object>>(async (c, a) => { prompt(c, dialogRoot.Object.PromptResult); });
-
-            Func<IDialog<T>> MakeRoot = () => dialogRoot.Object;
-            var toBot = new Message() { ConversationId = Guid.NewGuid().ToString() };
+            Func<IDialog<object>> MakeRoot = () => dialogRoot.Object;
+            var toBot = MakeTestMessage();
 
             using (new FiberTestBase.ResolveMoqAssembly(dialogRoot.Object))
-            using (var container = Build(dialogRoot.Object))
+            using (var container = Build(Options.ScopedQueue, dialogRoot.Object))
             {
-                using (var scope = container.BeginLifetimeScope())
+                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
                 {
-                    var store = scope.Resolve<IDialogContextStore>(TypedParameter.From(toBot));
+                    DialogModule_MakeRoot.Register(scope, MakeRoot);
 
-                    await store.PostAsync(toBot, MakeRoot);
+                    var task = scope.Resolve<IPostToBot>();
+
+                    await task.PostAsync(toBot, CancellationToken.None);
                     AssertMentions(PromptText, scope);
                 }
 
-                using (var scope = container.BeginLifetimeScope())
+                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
                 {
-                    var store = scope.Resolve<IDialogContextStore>(TypedParameter.From(toBot));
+                    DialogModule_MakeRoot.Register(scope, MakeRoot);
+
+                    var task = scope.Resolve<IPostToBot>();
 
                     toBot.Text = text;
 
-                    await store.PostAsync(toBot, MakeRoot);
+                    await task.PostAsync(toBot, CancellationToken.None);
                     AssertNoMessages(scope);
                     dialogRoot.Verify(d => d.PromptResult(It.IsAny<IDialogContext>(), It.Is<IAwaitable<T>>(actual => actual.GetAwaiter().GetResult().Equals(expected))), Times.Once);
                 }
@@ -155,6 +163,20 @@ namespace Microsoft.Bot.Builder.Tests
             var choices = new[] { "one", "two", "three" };
             await PromptSuccessAsync((context, resume) => PromptDialog.Choice(context, resume, choices, PromptText), "two", "two");
         }
+
+        [TestMethod]
+        public async Task PromptSuccess_Choice_Overlapping()
+        {
+            var choices = new[] { "9", "19", "else" };
+            await PromptSuccessAsync((context, resume) => PromptDialog.Choice(context, resume, choices, PromptText), "9", "9");
+        }
+
+        [TestMethod]
+        public async Task PromptSuccess_Choice_Overlapping_Reverse()
+        {
+            var choices = new[] { "19", "9", "else" };
+            await PromptSuccessAsync((context, resume) => PromptDialog.Choice(context, resume, choices, PromptText), "9", "9");
+        }
     }
 
     [TestClass]
@@ -166,42 +188,41 @@ namespace Microsoft.Bot.Builder.Tests
 
         public async Task PromptFailureAsync<T>(Action<IDialogContext, ResumeAfter<T>> prompt)
         {
-            var dialogRoot = MockDialog<T>();
+            var dialogRoot = MockDialog<T>(prompt);
 
-            dialogRoot
-                .Setup(d => d.StartAsync(It.IsAny<IDialogContext>()))
-                .Returns<IDialogContext>(async c => { c.Wait(dialogRoot.Object.FirstMessage); });
-            dialogRoot
-                .Setup(d => d.FirstMessage(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Connector.Message>>()))
-                .Returns<IDialogContext, IAwaitable<object>>(async (c, a) => { prompt(c, dialogRoot.Object.PromptResult); });
-
-            Func<IDialog<T>> MakeRoot = () => dialogRoot.Object;
-            var toBot = new Message() { ConversationId = Guid.NewGuid().ToString() };
+            Func<IDialog<object>> MakeRoot = () => dialogRoot.Object;
+            var toBot = MakeTestMessage();
 
             using (new FiberTestBase.ResolveMoqAssembly(dialogRoot.Object))
-            using (var container = Build(dialogRoot.Object))
+            using (var container = Build(Options.ScopedQueue, dialogRoot.Object))
             {
-                using (var scope = container.BeginLifetimeScope())
+                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
                 {
-                    var store = scope.Resolve<IDialogContextStore>(TypedParameter.From(toBot));
+                    DialogModule_MakeRoot.Register(scope, MakeRoot);
 
-                    await store.PostAsync(toBot, MakeRoot);
+                    var task = scope.Resolve<IPostToBot>();
+
+                    await task.PostAsync(toBot, CancellationToken.None);
                     AssertMentions(PromptText, scope);
                 }
 
-                using (var scope = container.BeginLifetimeScope())
+                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
                 {
-                    var store = scope.Resolve<IDialogContextStore>(TypedParameter.From(toBot));
+                    DialogModule_MakeRoot.Register(scope, MakeRoot);
 
-                    await store.PostAsync(toBot, MakeRoot);
+                    var task = scope.Resolve<IPostToBot>();
+
+                    await task.PostAsync(toBot, CancellationToken.None);
                     AssertMentions(RetryText, scope);
                 }
 
-                using (var scope = container.BeginLifetimeScope())
+                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
                 {
-                    var store = scope.Resolve<IDialogContextStore>(TypedParameter.From(toBot));
+                    DialogModule_MakeRoot.Register(scope, MakeRoot);
 
-                    await store.PostAsync(toBot, MakeRoot);
+                    var task = scope.Resolve<IPostToBot>();
+
+                    await task.PostAsync(toBot, CancellationToken.None);
                     AssertMentions("too many attempts", scope);
                     dialogRoot.Verify(d => d.PromptResult(It.IsAny<IDialogContext>(), It.Is<IAwaitable<T>>(actual => actual.ToTask().IsFaulted)), Times.Once);
                 }

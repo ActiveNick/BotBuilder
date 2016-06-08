@@ -34,7 +34,11 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Globalization;
+using System.IO;
+using System.Threading;
 using System.Threading.Tasks;
+#pragma warning disable 649
 
 using Autofac;
 
@@ -42,19 +46,21 @@ using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Builder.Dialogs.Internals;
 using Microsoft.Bot.Builder.FormFlow;
 using Microsoft.Bot.Builder.FormFlow.Advanced;
-using Microsoft.Bot.Builder.Internals.Fibers;
 using Microsoft.Bot.Connector;
 
 using AnnotatedSandwichOrder = Microsoft.Bot.Sample.AnnotatedSandwichBot.SandwichOrder;
 using SimpleSandwichOrder = Microsoft.Bot.Sample.SimpleSandwichBot.SandwichOrder;
+using System.Resources;
+using System.Text;
 
 namespace Microsoft.Bot.Builder.FormFlowTest
 {
     public enum DebugOptions
     {
-        None, AnnotationsAndNumbers, AnnotationsAndNoNumbers, NoAnnotations, NoFieldOrder,
-        WithState, 
-        SimpleSandwichBot, AnnotatedSandwichBot
+        None, AnnotationsAndNumbers, AnnotationsAndNoNumbers, AnnotationsAndText, NoAnnotations, NoFieldOrder,
+        WithState,
+        Localized,
+        SimpleSandwichBot, AnnotatedSandwichBot, JSONSandwichBot
     };
     [Serializable]
     public class Choices
@@ -65,98 +71,47 @@ namespace Microsoft.Bot.Builder.FormFlowTest
     class Program
     {
 
-        static async Task Interactive<T>(IDialog<T> form)
+        static public string Locale = CultureInfo.CurrentUICulture.Name;
+
+        static async Task Interactive<T>(IDialog<T> form) where T: class
         {
+            // NOTE: I use the DejaVuSansMono fonts as described here: http://stackoverflow.com/questions/21751827/displaying-arabic-characters-in-c-sharp-console-application
+            // But you don't have to reboot.
+            // If you don't want the multi-lingual support just comment this out
+            Console.OutputEncoding = Encoding.GetEncoding(65001);
             var message = new Message()
             {
+                From = new ChannelAccount { Id = "Console" },
                 ConversationId = Guid.NewGuid().ToString(),
+                To = new ChannelAccount { Id = "FormTest", IsBot = true },
                 Text = ""
             };
 
             var builder = new ContainerBuilder();
-            builder.RegisterModule(new DialogModule());
+            builder.RegisterModule(new DialogModule_MakeRoot());
             builder
-                .Register(c => new BotToUserTextWriter(new BotToUserQueue(message), Console.Out))
-                .Keyed<IBotToUser>(FiberModule.Key_DoNotSerialize)
+                .Register(c => new BotToUserTextWriter(new BotToUserQueue(message, new Queue<Message>()), Console.Out))
                 .As<IBotToUser>()
-                .SingleInstance();
+                .InstancePerLifetimeScope();
             using (var container = builder.Build())
+            using (var scope = DialogModule.BeginLifetimeScope(container, message))
             {
-                var store = container.Resolve<IDialogContextStore>(TypedParameter.From(message));
+                Func<IDialog<object>> MakeRoot = () => form;
+                DialogModule_MakeRoot.Register(scope, MakeRoot);
 
-                Func<IDialog<T>> MakeRoot = () => form;
+                var task = scope.Resolve<IPostToBot>();
+                var stack = scope.Resolve<IDialogStack>();
 
-                await store.PollAsync(() => form);
+                stack.Call(MakeRoot(), null);
+                await stack.PollAsync(CancellationToken.None);
 
                 while (true)
                 {
                     message.Text = await Console.In.ReadLineAsync();
-                    await store.PostAsync(message, () => form);
+                    message.Language = Locale;
+                    await task.PostAsync(message, CancellationToken.None);
                 }
-                }
-        }
-
-        private static IForm<PizzaOrder> BuildForm(bool noNumbers, bool ignoreAnnotations = false)
-        {
-            var form = new FormBuilder<PizzaOrder>(ignoreAnnotations);
-
-            ConditionalDelegate<PizzaOrder> isBYO = (pizza) => pizza.Kind == PizzaOptions.BYOPizza;
-            ConditionalDelegate<PizzaOrder> isSignature = (pizza) => pizza.Kind == PizzaOptions.SignaturePizza;
-            ConditionalDelegate<PizzaOrder> isGourmet = (pizza) => pizza.Kind == PizzaOptions.GourmetDelitePizza;
-            ConditionalDelegate<PizzaOrder> isStuffed = (pizza) => pizza.Kind == PizzaOptions.StuffedPizza;
-            // form.Configuration().DefaultPrompt.Feedback = FeedbackOptions.Always;
-            if (noNumbers)
-            {
-                form.Configuration.DefaultPrompt.ChoiceFormat = "{1}";
-                form.Configuration.DefaultPrompt.ChoiceCase = CaseNormalization.Lower;
-                form.Configuration.DefaultPrompt.ChoiceParens = BoolDefault.False;
             }
-            else
-            {
-                form.Configuration.DefaultPrompt.ChoiceFormat = "{0}. {1}";
-            }
-            return form
-                .Message("Welcome to the pizza bot!!!")
-                .Message("Lets make pizza!!!")
-                .Field(nameof(PizzaOrder.NumberOfPizzas))
-                .Field(nameof(PizzaOrder.Size))
-                .Field(nameof(PizzaOrder.Kind))
-                .Field("Size")
-                .Field("BYO.HalfAndHalf", isBYO)
-                .Field("BYO.Crust", isBYO)
-                .Field("BYO.Sauce", isBYO)
-                .Field("BYO.Toppings", isBYO)
-                .Field("BYO.HalfToppings", (pizza) => isBYO(pizza) && pizza.BYO != null && pizza.BYO.HalfAndHalf)
-                .Message("Almost there!!! {*filled}", isBYO)
-                .Field(nameof(PizzaOrder.GourmetDelite), isGourmet)
-                .Field(nameof(PizzaOrder.Signature), isSignature)
-                .Field(nameof(PizzaOrder.Stuffed), isStuffed)
-
-                .Message("What we have is a {?{Signature} signature pizza} {?{GourmetDelite} gourmet pizza} {?{Stuffed} {&Stuffed}} {?{?{BYO.Crust} {&BYO.Crust}} {?{BYO.Sauce} {&BYO.Sauce}} {?{BYO.Toppings}}} pizza")
-                .Field("DeliveryAddress", validate:
-                    async (state, value) =>
-                    {
-                        var result = new ValidateResult { IsValid = true };
-                        var str = value as string;
-                        if (str.Length == 0 || str[0] < '1' || str[0] > '9')
-                        {
-                            result.Feedback = "Address must start with number.";
-                            result.IsValid = false;
-                        }
-                        else
-                        {
-                            result.Feedback = "Your address is fine.";
-                        }
-                        return result;
-                    })
-                .AddRemainingFields()
-                .Message("Rating = {Rating:F1} and [{Rating:F2}]")
-                .Confirm("Would you like a {Size}, {[{BYO.Crust} {BYO.Sauce} {BYO.Toppings}]} pizza delivered to {DeliveryAddress}?", isBYO)
-                .Confirm("Would you like a {Size}, {&Signature} {Signature} pizza delivered to {DeliveryAddress}?", isSignature, dependencies: new string[] { "Size", "Kind", "Signature" })
-                .Confirm("Would you like a {Size}, {&GourmetDelite} {GourmetDelite} pizza delivered to {DeliveryAddress}?", isGourmet)
-                .Confirm("Would you like a {Size}, {&Stuffed} {Stuffed} pizza delivered to {DeliveryAddress}?", isStuffed)
-                .OnCompletionAsync(async (session, pizza) => Console.WriteLine("{0}", pizza))
-                .Build();
         }
 
         public static void TestValidate()
@@ -199,115 +154,29 @@ namespace Microsoft.Bot.Builder.FormFlowTest
                         .Build();
                 Debug.Fail("Validation failed");
             }
-            catch (ArgumentException )
+            catch (ArgumentException)
             {
             }
         }
 
-        public static IFormDialog<T> MakeForm<T>(BuildForm<T> buildForm) where T : class, new()
+        public static IFormDialog<T> MakeForm<T>(BuildFormDelegate<T> buildForm) where T : class, new()
         {
             return new FormDialog<T>(new T(), buildForm, options: FormOptions.PromptInStart);
         }
 
-
-        [Serializable]
-        public class MyBot : IDialog
-        {
-            async Task IDialog<object>.StartAsync(IDialogContext context)
-            {
-                context.Call<TopChoice>(new FormDialog<TopChoice>(new TopChoice()), WhatDoYouWant);
-            }
-
-            public async Task WhatDoYouWant(IDialogContext context, IAwaitable<TopChoice> choices)
-            {
-                switch ((await choices).Choice.Value)
-                {
-                    case TopChoices.Joke:
-                        context.Call<ChooseJoke>(new FormDialog<ChooseJoke>(new ChooseJoke(), options: FormOptions.PromptInStart),
-                            TellAJoke);
-                        break;
-                    default:
-                        await context.PostAsync("I don't understand");
-                        context.Call<TopChoice>(new FormDialog<TopChoice>(new TopChoice(), options:FormOptions.PromptInStart), WhatDoYouWant);
-                        break;
-                }
-            }
-
-            public async Task TellAJoke(IDialogContext context, IAwaitable<ChooseJoke> joke)
-            {
-                switch ((await joke).KindOfJoke)
-                {
-                    case TypeOfJoke.Funny:
-                        await context.PostAsync("Something funny");
-                        break;
-                    case TypeOfJoke.KnockKnock:
-                        await context.PostAsync("Knock-knock...");
-                        break;
-                }
-                context.Call<TopChoice>(new FormDialog<TopChoice>(new TopChoice(), options:FormOptions.PromptInStart), WhatDoYouWant);
-            }
-        }
-
-        public enum TopChoices { Joke, Weather }
-
-        [Serializable]
-        public class TopChoice
-        {
-            public TopChoices? Choice;
-        }
-
-        public enum TypeOfJoke { Funny, KnockKnock };
-
-        [Serializable]
-        public class ChooseJoke
-        {
-            public TypeOfJoke? KindOfJoke;
-        }
-
-        [Serializable]
-        public class NullDialog<T> : IDialog<T>
-        {
-            public async Task StartAsync(IDialogContext context)
-            {
-                context.Done<T>(default(T));
-            }
-        }
-
         static void Main(string[] args)
         {
-            var callJoke = Chain
-                .From(() => new FormDialog<TopChoice>(new TopChoice(), options:FormOptions.PromptInStart))
-                .ContinueWith<TopChoice, object>(async (context, result) =>
-                {
-                    switch ((await result).Choice)
-                    {
-                        case TopChoices.Joke: return new FormDialog<ChooseJoke>(new ChooseJoke(), options: FormOptions.PromptInStart);
-                        default:
-                            await context.PostAsync("I don't understand");
-                            return new NullDialog<object>();
-                    }
-                })
-                .ContinueWith<object, object>(async (context, result) =>
-                {
-                    var choice = await result;
-                    if (choice is ChooseJoke)
-                    {
-                        switch ((choice as ChooseJoke).KindOfJoke)
-                        {
-                            case TypeOfJoke.Funny:
-                                await context.PostAsync("Something funny");
-                                break;
-                            case TypeOfJoke.KnockKnock:
-                                await context.PostAsync("Knock-knock...");
-                                break;
-                        }
-                    }
-                    return new NullDialog<object>();
-                });
             // TestValidate();
             var callDebug =
                 Chain
-                .From(() => FormDialog.FromType<Choices>(FormOptions.PromptInStart))
+                .From(() => new PromptDialog.PromptString("Locale?", null, 1))
+                .ContinueWith<string, Choices>(async (ctx, locale) =>
+                    {
+                        Locale = await locale;
+                        CultureInfo.CurrentUICulture = CultureInfo.GetCultureInfo(Locale);
+                        CultureInfo.CurrentCulture = CultureInfo.CurrentUICulture;
+                        return FormDialog.FromType<Choices>(FormOptions.PromptInStart);
+                    })
                 .ContinueWith<Choices, object>(async (context, result) =>
                 {
                     Choices choices;
@@ -324,55 +193,71 @@ namespace Microsoft.Bot.Builder.FormFlowTest
                     switch (choices.Choice)
                     {
                         case DebugOptions.AnnotationsAndNumbers:
-                            return MakeForm(() => BuildForm(noNumbers: false));
+                            return MakeForm(() => PizzaOrder.BuildForm(noNumbers: false));
                         case DebugOptions.AnnotationsAndNoNumbers:
-                            return MakeForm(() => BuildForm(noNumbers: true));
+                            return MakeForm(() => PizzaOrder.BuildForm(noNumbers: true));
+                        case DebugOptions.AnnotationsAndText:
+                            return MakeForm(() => PizzaOrder.BuildForm(style: ChoiceStyleOptions.AutoText));
                         case DebugOptions.NoAnnotations:
-                            return MakeForm(() => BuildForm(noNumbers: true, ignoreAnnotations: true));
+                            return MakeForm(() => PizzaOrder.BuildForm(noNumbers: true, ignoreAnnotations: true));
                         case DebugOptions.NoFieldOrder:
                             return MakeForm(() => new FormBuilder<PizzaOrder>().Build());
                         case DebugOptions.WithState:
                             return new FormDialog<PizzaOrder>(new PizzaOrder()
-                            { Size = SizeOptions.Large, DeliveryAddress = "123 State", Kind = PizzaOptions.BYOPizza }, 
-                            () => BuildForm(noNumbers: false), options:FormOptions.PromptInStart);
+                            { Size = SizeOptions.Large, Kind = PizzaOptions.BYOPizza },
+                            () => PizzaOrder.BuildForm(noNumbers: false),
+                            options: FormOptions.PromptInStart,
+                            entities: new Luis.Models.EntityRecommendation[] {
+                                new Luis.Models.EntityRecommendation("Address", "abc", "DeliveryAddress"),
+                                new Luis.Models.EntityRecommendation("Toppings", "onions", "BYO.Toppings"),
+                                new Luis.Models.EntityRecommendation("Toppings", "peppers", "BYO.Toppings"),
+                                new Luis.Models.EntityRecommendation("Toppings", "ice", "BYO.Toppings"),
+                                new Luis.Models.EntityRecommendation("NotFound", "OK", "Notfound")
+                            }
+                            );
+                        case DebugOptions.Localized:
+                            {
+                                var form = PizzaOrder.BuildForm(false, false);
+                                using (var stream = new FileStream("pizza.resx", FileMode.Create))
+                                using (var writer = new ResXResourceWriter(stream))
+                                {
+                                    form.SaveResources(writer);
+                                }
+                                Process.Start(new ProcessStartInfo(@"RView.exe", "pizza.resx -c " + Locale) { UseShellExecute = false, CreateNoWindow = true }).WaitForExit();
+                                return MakeForm(() => PizzaOrder.BuildForm(false, false, true));
+                            }
                         case DebugOptions.SimpleSandwichBot:
                             return MakeForm(() => SimpleSandwichOrder.BuildForm());
                         case DebugOptions.AnnotatedSandwichBot:
-                            return MakeForm(() => AnnotatedSandwichOrder.BuildForm());
+                            return MakeForm(() => AnnotatedSandwichOrder.BuildLocalizedForm());
+                        case DebugOptions.JSONSandwichBot:
+                            return MakeForm(() => AnnotatedSandwichOrder.BuildJsonForm());
                         default:
                             throw new NotImplementedException();
                     }
                 })
-                .Do(async result =>
+                .Do(async (context, result) =>
                 {
                     try
                     {
                         var item = await result;
                         Debug.WriteLine(item);
                     }
-                    catch (OperationCanceledException)
+                    catch (FormCanceledException e)
                     {
-                        Debug.WriteLine("you cancelled");
+                        if (e.InnerException == null)
+                        {
+                            await context.PostAsync($"Quit on {e.Last} step.");
+                        }
+                        else
+                        {
+                            await context.PostAsync($"Exception {e.Message} on step {e.Last}.");
+                        }
                     }
                 })
+                .DefaultIfException()
                 .Loop();
-
             Interactive(callDebug).GetAwaiter().GetResult();
-            /*
-            var dialogs = new DialogCollection().Add(debugForm);
-            var form = AddFields(new Form<PizzaOrder>("full"), noNumbers: true);
-            Console.WriteLine("\nWith annotations and numbers\n");
-            Interactive<Form<PizzaOrder>>(AddFields(new Form<PizzaOrder>("No numbers"), noNumbers: false));
-
-            Console.WriteLine("With annotations and no numbers");
-            Interactive<Form<PizzaOrder>>(form);
-
-            Console.WriteLine("\nWith no annotations\n");
-            Interactive<Form<PizzaOrder>>(AddFields(new Form<PizzaOrder>("No annotations", ignoreAnnotations: true), noNumbers: false));
-
-            Console.WriteLine("\nWith no fields.\n");
-            Interactive<Form<PizzaOrder>>(new Form<PizzaOrder>("No fields"));
-            */
         }
     }
 }

@@ -1,11 +1,8 @@
-﻿using System;
-using System.Linq;
-using System.Threading.Tasks;
+﻿using System.Threading.Tasks;
 using System.Web.Http;
 
 using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Connector;
-using Microsoft.Bot.Connector.Utilities;
 
 namespace Microsoft.Bot.Sample.EchoBot
 {
@@ -18,8 +15,11 @@ namespace Microsoft.Bot.Sample.EchoBot
         /// </summary>
         public async Task<Message> Post([FromBody]Message message)
         {
+            //return await DirectConversation.SendDirectAsync(message, () => new EchoDialog());
             //return await Conversation.SendAsync(message, () => new EchoDialog());
-            return await Conversation.SendAsync(message, () => EchoCommandDialog.echoCommandDialog);
+            //return await Conversation.SendAsync(message, () => EchoCommandDialog.dialog);
+            //return await Conversation.SendAsync(message, () => new EchoAttachmentDialog());
+            return await Conversation.SendAsync(message, () => EchoChainDialog.dialog);
         }
     }
 }

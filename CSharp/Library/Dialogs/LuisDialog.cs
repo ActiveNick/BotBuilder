@@ -39,8 +39,10 @@ using System.Runtime.Serialization;
 using System.Threading.Tasks;
 
 using Microsoft.Bot.Connector;
+using Microsoft.Bot.Builder.Dialogs.Internals;
 using Microsoft.Bot.Builder.Internals.Fibers;
 using Microsoft.Bot.Builder.Luis;
+using Microsoft.Bot.Builder.Luis.Models;
 
 namespace Microsoft.Bot.Builder.Dialogs
 {
@@ -86,6 +88,7 @@ namespace Microsoft.Bot.Builder.Dialogs
         {
             SetField.NotNull(out this.Method, nameof(method), method);
         }
+
         private InvalidIntentHandlerException(SerializationInfo info, StreamingContext context)
             : base(info, context)
         {
@@ -100,6 +103,7 @@ namespace Microsoft.Bot.Builder.Dialogs
     {
         private readonly ILuisService service;
 
+        /// <summary>   Mapping from intent string to the appropriate handler. </summary>
         [NonSerialized]
         protected Dictionary<string, IntentHandler> handlerByIntent;
 
@@ -129,18 +133,23 @@ namespace Microsoft.Bot.Builder.Dialogs
             context.Wait(MessageReceived);
         }
 
+        protected virtual IntentRecommendation BestIntentFrom(LuisResult result)
+        {
+            return result.Intents.MaxBy(i => i.Score ?? 0);
+        }
+
         protected virtual async Task MessageReceived(IDialogContext context, IAwaitable<Message> item)
         {
             if (this.handlerByIntent == null)
             {
-                this.handlerByIntent = LuisDialog.EnumerateHandlers(this).ToDictionary(kv => kv.Key, kv => kv.Value);
+                this.handlerByIntent = new Dictionary<string, IntentHandler>(GetHandlersByIntent());
             }
 
             var message = await item;
-            var luisRes = await this.service.QueryAsync(message.Text);
+            var messageText = await GetLuisQueryTextAsync(context, message);
+            var luisRes = await this.service.QueryAsync(messageText);
 
-            var maximum = luisRes.Intents.Max(t => t.Score ?? 0);
-            var intent = luisRes.Intents.FirstOrDefault(i => { var curScore = i.Score ?? 0; return curScore == maximum; });
+            var intent = BestIntentFrom(luisRes);
 
             IntentHandler handler = null;
             if (intent == null || !this.handlerByIntent.TryGetValue(intent.Intent, out handler))
@@ -157,6 +166,16 @@ namespace Microsoft.Bot.Builder.Dialogs
                 var text = $"No default intent handler found.";
                 throw new Exception(text);
             }
+        }
+
+        protected virtual Task<string> GetLuisQueryTextAsync(IDialogContext context, Message message)
+        {
+            return Task.FromResult(message.Text);
+        }
+
+        protected virtual IDictionary<string, IntentHandler> GetHandlersByIntent()
+        {
+            return LuisDialog.EnumerateHandlers(this).ToDictionary(kv => kv.Key, kv => kv.Value);
         }
     }
 

@@ -35,12 +35,13 @@ import dialog = require('./Dialog');
 import actions = require('./DialogAction');
 import simpleDialog = require('./SimpleDialog');
 import events = require('events');
-import prompts = require('./Prompts');
 import consts = require('../consts');
 
-interface IDialogMap {
+export interface IDialogMap {
     [id: string]: dialog.IDialog;
 }
+
+export var systemDialogs: IDialogMap = {};
 
 export class DialogCollection extends events.EventEmitter {
     private middleware: { (session: ISession, next: Function): void; }[] = []; 
@@ -48,23 +49,21 @@ export class DialogCollection extends events.EventEmitter {
 
     constructor() {
         super();
-        this.add(consts.DialogId.Prompts, new prompts.Prompts())
+        this.add(systemDialogs);
     }
 
-    public add(dialogs: { [id: string]: dialog.IDialog; }): DialogCollection;
-    public add(id: string, fn: IDialogHandler<any>): DialogCollection;
-    public add(id: string, waterfall: actions.IDialogWaterfallStep[]): DialogCollection;
-    public add(id: string, dialog: dialog.IDialog): DialogCollection;
-    public add(id: any, dialog?: any): DialogCollection {
+    public add(id: { [id: string]: dialog.IDialog; }): DialogCollection;
+    public add(id: string, dialog?: dialog.IDialog | actions.IDialogWaterfallStep[] | actions.IDialogWaterfallStep): DialogCollection;
+    public add(id: any, dialog?: dialog.IDialog | actions.IDialogWaterfallStep[] | actions.IDialogWaterfallStep): DialogCollection {
         // Fixup params
         var dialogs: { [id: string]: dialog.IDialog; };
         if (typeof id == 'string') {
             if (Array.isArray(dialog)) {
-                dialog = new simpleDialog.SimpleDialog(actions.DialogAction.waterfall(dialog));
+                dialog = new simpleDialog.SimpleDialog(actions.waterfall(<actions.IDialogWaterfallStep[]>dialog));
             } else if (typeof dialog == 'function') {
-                dialog = new simpleDialog.SimpleDialog(dialog);
+                dialog = new simpleDialog.SimpleDialog(actions.waterfall([<actions.IDialogWaterfallStep>dialog]));
             }
-            dialogs = { [id]: dialog };
+            dialogs = { [id]: <dialog.IDialog>dialog };
         } else {
             dialogs = id;
         }

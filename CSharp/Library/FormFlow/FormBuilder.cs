@@ -31,12 +31,14 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+using Microsoft.Bot.Builder.FormFlow.Advanced;
+using Microsoft.Bot.Builder.Resource;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
-
-using Microsoft.Bot.Builder.FormFlow.Advanced;
+using System.Resources;
+using System.Threading;
 
 namespace Microsoft.Bot.Builder.FormFlow
 {
@@ -58,7 +60,7 @@ namespace Microsoft.Bot.Builder.FormFlow
             _form = new Form<T>(ignoreAnnotations);
         }
 
-        public IForm<T> Build()
+        public IForm<T> Build(Assembly resourceAssembly = null, string resourceName = null)
         {
             if (!_form._steps.Any((step) => step.Type == StepType.Field))
             {
@@ -69,7 +71,47 @@ namespace Microsoft.Bot.Builder.FormFlow
                 {
                     builder.Field(new FieldReflector<T>(path));
                 }
-                builder.Confirm("Is this your selection?\n{*}");
+                builder.Confirm(new PromptAttribute(_form.Configuration.Template(TemplateUsage.Confirmation)));
+            }
+            if (resourceAssembly == null)
+            {
+                resourceAssembly = typeof(T).Assembly;
+            }
+            if (resourceName == null)
+            {
+                resourceName = typeof(T).FullName;
+            }
+            var lang = resourceAssembly.GetCustomAttribute<NeutralResourcesLanguageAttribute>();
+            if (lang != null && !string.IsNullOrWhiteSpace(lang.CultureName))
+            {
+                try
+                {
+                    IEnumerable<string> missing, extra;
+                    string name = null;
+                    foreach (var resource in resourceAssembly.GetManifestResourceNames())
+                    {
+                        if (resource.Contains(resourceName))
+                        {
+                            var pieces = resource.Split('.');
+                            name = string.Join(".", pieces.Take(pieces.Count() - 1));
+                            break;
+                        }
+                    }
+                    if (name != null)
+                    {
+                        var rm = new ResourceManager(name, resourceAssembly);
+                        var rs = rm.GetResourceSet(Thread.CurrentThread.CurrentUICulture, true, true);
+                        _form.Localize(rs.GetEnumerator(), out missing, out extra);
+                        if (missing.Any())
+                        {
+                            throw new MissingManifestResourceException($"Missing resources {missing}");
+                        }
+                    }
+                }
+                catch (MissingManifestResourceException)
+                {
+                    // Resource was not localized
+                }
             }
             Validate();
             return this._form;
@@ -77,48 +119,22 @@ namespace Microsoft.Bot.Builder.FormFlow
 
         public FormConfiguration Configuration { get { return _form._configuration; } }
 
-        public IFormBuilder<T> Message(string message, ConditionalDelegate<T> condition = null)
+        public IFormBuilder<T> Message(string message, ActiveDelegate<T> condition = null, IEnumerable<string> dependencies = null)
         {
-            _form._steps.Add(new MessageStep<T>(new PromptAttribute(message), condition, _form));
+            _form._steps.Add(new MessageStep<T>(new PromptAttribute(message), condition, dependencies, _form));
             return this;
         }
 
-        public IFormBuilder<T> Message(PromptAttribute prompt, ConditionalDelegate<T> condition = null)
+        public IFormBuilder<T> Message(PromptAttribute prompt, ActiveDelegate<T> condition = null, IEnumerable<string> dependencies = null)
         {
-            _form._steps.Add(new MessageStep<T>(prompt, condition, _form));
+            _form._steps.Add(new MessageStep<T>(prompt, condition, dependencies, _form));
             return this;
         }
 
-        public IFormBuilder<T> Field(string name, ConditionalDelegate<T> condition = null, ValidateDelegate<T> validate = null)
+        public IFormBuilder<T> Message(MessageDelegate<T> generateMessage, ActiveDelegate<T> condition = null, IEnumerable<string> dependencies = null)
         {
-            var field = (condition == null ? new FieldReflector<T>(name) : new Conditional<T>(name, condition));
-            if (validate != null)
-            {
-                field.SetValidation(validate);
-            }
-            return AddField(field);
-        }
-
-        public IFormBuilder<T> Field(string name, string prompt, ConditionalDelegate<T> condition = null, ValidateDelegate<T> validate = null)
-        {
-            var field = (condition == null ? new FieldReflector<T>(name) : new Conditional<T>(name, condition));
-            if (validate != null)
-            {
-                field.SetValidation(validate);
-            }
-            field.SetPrompt(new PromptAttribute(prompt));
-            return AddField(field);
-        }
-
-        public IFormBuilder<T> Field(string name, PromptAttribute prompt, ConditionalDelegate<T> condition = null, ValidateDelegate<T> validate = null)
-        {
-            var field = (condition == null ? new FieldReflector<T>(name) : new Conditional<T>(name, condition));
-            if (validate != null)
-            {
-                field.SetValidation(validate);
-            }
-            field.SetPrompt(prompt);
-            return AddField(field);
+            _form._steps.Add(new MessageStep<T>(generateMessage, condition, dependencies, _form));
+            return this;
         }
 
         public IFormBuilder<T> Field(IField<T> field)
@@ -126,78 +142,43 @@ namespace Microsoft.Bot.Builder.FormFlow
             return AddField(field);
         }
 
-        public IFormBuilder<T> AddRemainingFields(IEnumerable<string> exclude = null)
-        {
-            var exclusions = (exclude == null ? new string[0] : exclude.ToArray());
-            var paths = new List<string>();
-            FieldPaths(typeof(T), "", paths);
-            foreach (var path in paths)
-            {
-                if (!exclusions.Contains(path))
-                {
-                    IField<T> field = _form._fields.Field(path);
-                    if (field == null)
-                    {
-                        AddField(new FieldReflector<T>(path));
-                    }
-                }
-            }
-            return this;
-        }
-
-        public IFormBuilder<T> Confirm(string prompt, ConditionalDelegate<T> condition = null, IEnumerable<string> dependencies = null)
+        public IFormBuilder<T> Confirm(string prompt, ActiveDelegate<T> condition = null, IEnumerable<string> dependencies = null)
         {
             IFormBuilder<T> builder = this;
-            return builder.Confirm(new PromptAttribute(prompt) { ChoiceFormat = "{1}", AllowDefault = BoolDefault.False }, condition, dependencies);
+            return builder.Confirm(new PromptAttribute(prompt) { ChoiceFormat = Resources.ConfirmChoiceFormat, AllowDefault = BoolDefault.False }, condition, dependencies);
         }
 
-        public IFormBuilder<T> Confirm(PromptAttribute prompt, ConditionalDelegate<T> condition = null, IEnumerable<string> dependencies = null)
+        public IFormBuilder<T> Confirm(PromptAttribute prompt, ActiveDelegate<T> condition = null, IEnumerable<string> dependencies = null)
         {
             if (condition == null) condition = state => true;
-            if (dependencies == null)
-            {
-                // Default next steps go from previous field ignoring confirmations back to next confirmation
-                // Last field before confirmation
-                var end = _form._steps.Count();
-                while (end > 0)
-                {
-                    if (_form._steps[end - 1].Type == StepType.Field)
-                    {
-                        break;
-                    }
-                    --end;
-                }
-
-                var start = end;
-                while (start > 0)
-                {
-                    if (_form._steps[start - 1].Type == StepType.Confirm)
-                    {
-                        break;
-                    }
-                    --start;
-                }
-                var fields = new List<string>();
-                for (var i = start; i < end; ++i)
-                {
-                    if (_form._steps[i].Type == StepType.Field)
-                    {
-                        fields.Add(_form._steps[i].Name);
-                    }
-                }
-                dependencies = fields;
-            }
-            var confirmation = new Confirmation<T>(prompt, condition, dependencies);
+            dependencies = dependencies ?? _form.Dependencies(_form.Steps.Count());
+            var confirmation = new Confirmation<T>(prompt, condition, dependencies, _form);
             confirmation.Form = _form;
             _form._fields.Add(confirmation);
             _form._steps.Add(new ConfirmStep<T>(confirmation));
             return this;
         }
 
-        public IFormBuilder<T> OnCompletionAsync(CompletionDelegate<T> callback)
+        public IFormBuilder<T> Confirm(MessageDelegate<T> generateMessage, ActiveDelegate<T> condition = null, IEnumerable<string> dependencies = null)
+        {
+            if (condition == null) condition = state => true;
+            dependencies = dependencies ?? _form.Dependencies(_form.Steps.Count());
+            var confirmation = new Confirmation<T>(generateMessage, condition, dependencies, _form);
+            confirmation.Form = _form;
+            _form._fields.Add(confirmation);
+            _form._steps.Add(new ConfirmStep<T>(confirmation));
+            return this;
+        }
+
+        public IFormBuilder<T> OnCompletionAsync(OnCompletionAsyncDelegate<T> callback)
         {
             _form._completion = callback;
             return this;
+        }
+
+        public bool HasField(string name)
+        {
+            return _form.Fields.Field(name) != null;
         }
 
         private IFormBuilder<T> AddField(IField<T> field)
@@ -222,6 +203,7 @@ namespace Microsoft.Bot.Builder.FormFlow
             {TemplateUsage.Bool, 0 },
             { TemplateUsage.BoolHelp, 1},
             { TemplateUsage.Clarify, 1},
+            { TemplateUsage.Confirmation, 0 },
             { TemplateUsage.CurrentChoice, 0},
             { TemplateUsage.DateTime, 0},
             { TemplateUsage.DateTimeHelp, 2},
@@ -268,18 +250,24 @@ namespace Microsoft.Bot.Builder.FormFlow
             {
                 // Validate prompt
                 var annotation = step.Annotation;
-                var name = step.Type == StepType.Field ? step.Name : "";
-                foreach (var pattern in annotation.Patterns)
+                if (annotation != null)
                 {
-                    ValidatePattern(pattern, name, 5);
-                }
-                if (step.Type != StepType.Message)
-                {
-                    foreach (TemplateUsage usage in Enum.GetValues(typeof(TemplateUsage)))
+                    var name = step.Type == StepType.Field ? step.Name : "";
+                    foreach (var pattern in annotation.Patterns)
                     {
-                        foreach (var pattern in step.Field.Template(usage).Patterns)
+                        ValidatePattern(pattern, name, 5);
+                    }
+                    if (step.Type != StepType.Message)
+                    {
+                        foreach (TemplateUsage usage in Enum.GetValues(typeof(TemplateUsage)))
                         {
-                            ValidatePattern(pattern, name, TemplateArgs(usage));
+                            if (usage != TemplateUsage.None)
+                            {
+                                foreach (var pattern in step.Field.Template(usage).Patterns)
+                                {
+                                    ValidatePattern(pattern, name, TemplateArgs(usage));
+                                }
+                            }
                         }
                     }
                 }

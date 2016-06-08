@@ -1,10 +1,7 @@
-﻿using System;
-using System.Linq;
-using System.Web.Http;
+﻿using System.Web.Http;
 using System.Threading.Tasks;
 
 using Microsoft.Bot.Connector;
-using Microsoft.Bot.Connector.Utilities;
 using Microsoft.Bot.Builder.FormFlow;
 using Microsoft.Bot.Builder.Dialogs;
 
@@ -17,10 +14,10 @@ namespace Microsoft.Bot.Sample.PizzaBot
         {
             var builder = new FormBuilder<PizzaOrder>();
 
-            ConditionalDelegate<PizzaOrder> isBYO = (pizza) => pizza.Kind == PizzaOptions.BYOPizza;
-            ConditionalDelegate<PizzaOrder> isSignature = (pizza) => pizza.Kind == PizzaOptions.SignaturePizza;
-            ConditionalDelegate<PizzaOrder> isGourmet = (pizza) => pizza.Kind == PizzaOptions.GourmetDelitePizza;
-            ConditionalDelegate<PizzaOrder> isStuffed = (pizza) => pizza.Kind == PizzaOptions.StuffedPizza;
+            ActiveDelegate<PizzaOrder> isBYO = (pizza) => pizza.Kind == PizzaOptions.BYOPizza;
+            ActiveDelegate<PizzaOrder> isSignature = (pizza) => pizza.Kind == PizzaOptions.SignaturePizza;
+            ActiveDelegate<PizzaOrder> isGourmet = (pizza) => pizza.Kind == PizzaOptions.GourmetDelitePizza;
+            ActiveDelegate<PizzaOrder> isStuffed = (pizza) => pizza.Kind == PizzaOptions.StuffedPizza;
 
             return builder
                 // .Field(nameof(PizzaOrder.Choice))

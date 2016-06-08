@@ -13,9 +13,9 @@
     /// [EntityRecommendation.Entity]: @ref Microsoft.Bot.Builder.Luis.EntityRecommendation.Entity 
     /// [LuisDialog]: @ref Microsoft.Bot.Builder.Dialogs.LuisDialog 
     /// [AllowDefault]: @ref Advanced.TemplateBaseAttribute.AllowDefault 
-    /// [ChoiceCase]: @ref Advanvced.TemplateBaseAttribute.ChoiceCase
+    /// [ChoiceCase]: @ref Advanced.TemplateBaseAttribute.ChoiceCase
     /// [ChoiceLastSeparator]: @ref Advanced.TemplateBaseAttribute.ChoiceLastSeparator
-    /// [ChoiceSeparator]: @ref Advanced.TemplateBaseAttribtue.ChoiceSeparator
+    /// [ChoiceSeparator]: @ref Advanced.TemplateBaseAttribute.ChoiceSeparator
     /// [ChoiceFormat]: @ref Advanced.TemplateBaseAttribute.ChoiceFormat 
     /// [ChoiceParens]: @ref Advanced.TemplateBaseAttribute.ChoiceParens
     /// [ChoiceStyle]: @ref Advanced.TemplateBaseAttribute.ChoiceStyle 
@@ -24,6 +24,12 @@
     /// [LastSeparator]: @ref Advanced.TemplateBaseAttribute.LastSeparator 
     /// [Separator]: @ref Advanced.TemplateBaseAttribute.Separator 
     /// [ValueCase]: @ref Advanced.TemplateBaseAttribute.ValueCase
+    /// [MAT]: https://developer.microsoft.com/en-us/windows/develop/multilingual-app-toolkit
+    /// [XLF]: https://en.wikipedia.org/wiki/XLIFF
+    /// [CurrentUICulture]: https://msdn.microsoft.com/en-us/library/system.threading.thread.currentuiculture(v=vs.110).aspx
+    /// [CurrentCulture]: https://msdn.microsoft.com/en-us/library/system.threading.thread.currentculture(v=vs.110).aspx
+    /// [JSON Schema]: http://json-schema.org/documentation.html
+    /// [JObject]: http://www.newtonsoft.com/json/help/html/T_Newtonsoft_Json_Linq_JObject.htm
     /// 
     /// \section Overview
     /// \ref dialogs are very powerful and flexible, but handling a guided conversation like ordering a sandwich
@@ -88,7 +94,7 @@
     ///  4. Chicken And Bacon Ranch Melt
     ///  5. Cold Cut Combo
     ///  6. Meatball Marinara
-    ///  7. Over Roasted Chicken
+    ///  7. Oven Roasted Chicken
     ///  8. Roast Beef
     ///  9. Rotisserie Style Chicken
     ///  10. Spicy Italian
@@ -108,11 +114,11 @@
     /// ~~~{.txt}
     /// > help
     /// * You are filling in the sandwich field.Possible responses:
-    /// * You can enter a number 1-15 or words from the descriptions. (BLT, Black Forest Ham, Buffalo Chicken, Chicken And Bacon Ranch Melt, Cold Cut Combo, Meatball Marinara, Over Roasted Chicken, Roast Beef, Rotisserie Style Chicken, Spicy Italian, Steak And Cheese, Sweet Onion Teriyaki, Tuna, Turkey Breast, and Veggie)
+    /// * You can enter a number 1-15 or words from the descriptions. (BLT, Black Forest Ham, Buffalo Chicken, Chicken And Bacon Ranch Melt, Cold Cut Combo, Meatball Marinara, Oven Roasted Chicken, Roast Beef, Rotisserie Style Chicken, Spicy Italian, Steak And Cheese, Sweet Onion Teriyaki, Tuna, Turkey Breast, and Veggie)
     /// * Back: Go back to the previous question.
     /// * Help: Show the kinds of responses you can enter.
     /// * Quit: Quit the form without completing it.
-    /// * Reset: Start over filling in the form. (With defaults of your previous entries.)
+    /// * Reset: Start over filling in the form. (With defaults from your previous entries.)
     /// * Status: Show your progress in filling in the form so far.
     /// * You can switch to another field by entering its name. (Sandwich, Length, Bread, Cheese, Toppings, and Sauce).
     /// ~~~  
@@ -128,7 +134,7 @@
     ///  4. Chicken And Bacon Ranch Melt
     ///  5. Cold Cut Combo
     ///  6. Meatball Marinara
-    ///  7. Over Roasted Chicken
+    ///  7. Oven Roasted Chicken
     ///  8. Roast Beef
     ///  9. Rotisserie Style Chicken
     ///  10. Spicy Italian
@@ -153,7 +159,7 @@
     ///  4. Chicken And Bacon Ranch Melt
     ///  5. Cold Cut Combo
     ///  6. Meatball Marinara
-    ///  7. Over Roasted Chicken
+    ///  7. Oven Roasted Chicken
     ///  8. Roast Beef
     ///  9. Rotisserie Style Chicken
     ///  10. Spicy Italian
@@ -174,7 +180,7 @@
     ///  4. Chicken And Bacon Ranch Melt
     ///  5. Cold Cut Combo
     ///  6. Meatball Marinara
-    ///  7. Over Roasted Chicken
+    ///  7. Oven Roasted Chicken
     ///  8. Roast Beef
     ///  9. Rotisserie Style Chicken
     ///  10. Spicy Italian
@@ -373,7 +379,7 @@
     /// 4. Chicken And Bacon Ranch Melt
     /// 5. Cold Cut Combo
     /// 6. Meatball Marinara
-    /// 7. Over Roasted Chicken
+    /// 7. Oven Roasted Chicken
     /// 8. Roast Beef
     /// 9. Rotisserie Style Chicken
     /// 10. Spicy Italian
@@ -398,7 +404,7 @@
     /// * Chicken And Bacon Ranch Melt
     /// * Cold Cut Combo
     /// * Meatball Marinara
-    /// * Over Roasted Chicken
+    /// * Oven Roasted Chicken
     /// * Roast Beef
     /// * Rotisserie Style Chicken
     /// * Spicy Italian
@@ -419,11 +425,11 @@
     /// What kind of sandwich would you like?
     /// > ?
     /// * You are filling in the sandwich field. Possible responses:
-    /// * You can enter in any words from the descriptions. (BLT, Black Forest Ham, Buffalo Chicken, Chicken And Bacon Ranch Melt, Cold Cut Combo, Meatball Marinara, Over Roasted Chicken, Roast Beef, Rotisserie Style Chicken, Spicy Italian, Steak And Cheese, Sweet Onion Teriyaki, Tuna, Turkey Breast, and Veggie)
+    /// * You can enter in any words from the descriptions. (BLT, Black Forest Ham, Buffalo Chicken, Chicken And Bacon Ranch Melt, Cold Cut Combo, Meatball Marinara, Oven Roasted Chicken, Roast Beef, Rotisserie Style Chicken, Spicy Italian, Steak And Cheese, Sweet Onion Teriyaki, Tuna, Turkey Breast, and Veggie)
     /// * Back: Go back to the previous question.
     /// * Help: Show the kinds of responses you can enter.
     /// * Quit: Quit the form without completing it.
-    /// * Reset: Start over filling in the form. (With defaults of your previous entries.)
+    /// * Reset: Start over filling in the form. (With defaults from your previous entries.)
     /// * Status: Show your progress in filling in the form so far.
     /// * You can switch to another field by entering its name. (Sandwich, Length, Bread, Cheese, Sauces, and Toppings).
     /// ~~~
@@ -516,7 +522,7 @@
     ///  4. Chicken And Bacon Ranch Melt
     ///  5. Cold Cut Combo
     ///  6. Meatball Marinara
-    ///  7. Over Roasted Chicken
+    ///  7. Oven Roasted Chicken
     ///  8. Roast Beef
     ///  9. Rotisserie Style Chicken
     ///  10. Spicy Italian
@@ -564,7 +570,7 @@
     /// For sandwich toppings you have selected Avocado, Banana Peppers, Cucumbers, Green Bell Peppers, Lettuce, Olives, Pickles, Red Onion, Spinach, and Tomatoes.
     /// ~~~
     /// 
-    /// \subsection ControlFlow Using the Form Builder
+    /// \subsection controlFlow Using the Form Builder
     /// So far we have improved your dialog via attributes and business logic.  There is 
     /// another way to improve your dialog and that is through the FormBuilder.  The FormBuilder
     /// allows more fine-grained control over the steps in your conversation and lets you put in messages
@@ -573,31 +579,232 @@
     /// is explicit navigation.)  Here is a more complex usage of FormBuilder:
     /// \dontinclude AnnotatedSandwichBot/AnnotatedSandwich.cs
     /// \skip static
-    /// \until return
+    /// \until .Build
     /// \until }
     /// 
-    /// The steps this defines are:
-    /// * Show the welcome message  
-    /// * Fill in SandwichOrder.Sandwich  
+    /// This looks complex, but that is because of the addition of advanced features like validation and dynamically defined fields.
+    /// (See \ref dynamicFields for more information.)
+    /// The main structure is all about defining the default step order.  Here are the steps: 
+    /// * Show the welcome message.
+    /// * Fill in SandwichOrder.Sandwich
     /// * Fill in SandwichOrder.Length    
     /// * Fill in SandwichOrder.Bread  
     /// * Fill in SandwichOrder.Cheese
     /// * Fill in SandwichOrder.Toppings  
-    /// * Show a message confirming the selected toppings.    
+    /// * Show a message confirming the selected toppings.      
+    /// * Fill in SandwichOrder.Sauces  
+    /// * Dynamically defined field for SandwichOrder.Specials.  (See \ref dynamicFields for more information.)
+    /// * Dynamically defined confirmation for the cost
     /// * Fill in SandwichOrder.DeliveryAddress and verify the resulting string.  If it does not start with a number we return a message.
     /// * Fill in SandwichOrder.DeliveryTime with a custom prompt.  
     /// * Confirm the order.    
     /// * Add any remaining fields in the order they are defined in your class.  (If this was left out, those steps to fill in those fields would not be included.)
-    /// * Show a final message thanking them.
+    /// * Show a final thank you message.  
+    /// * Define an OnCompletionAsync handler to process the order.
     /// 
     /// In the SandwichOrder.DeliveryTime prompt and the confirmation message you can see an instance of
     /// the \ref patterns where pattern elements like {Length} are filled in from your C# class
     /// before the string is shown to the user.
     /// 
+    /// \subsection dynamicFields Dynamically Defined Fields, Confirmations and Messages
     /// FormBuilder also allows you to do other more advanced things like dynamically switch on
     /// and off parts of your form based on the state of your object or dynamically define fields
     /// rather than drive them off a C# class.  
     /// 
+    /// In order to define a dynamic field, you can implement Advanced.IField yourself, 
+    /// but it is easier to make use of the Advanced.FieldReflector class.  Imagine we would like to 
+    /// create some specials for free drinks and cookies but only for foot-long sandwiches.  
+    /// The first step for using Advanced.FieldReflector is to define
+    /// the underlying field that will contain your dynamic value, like this:
+    /// \dontinclude AnnotatedSandwichBot/AnnotatedSandwich.cs
+    /// \skip Sauces
+    /// \skip Optional
+    /// \until Specials
+    /// 
+    /// We can apply normal attributes to this field like [Optional] to mark the field as allowing a no preference choice and by changing the template 
+    /// value for TemplateUsage.NoPreference. 
+    /// 
+    /// Now we need to add the dynamic part to the FormBuilder like this:
+    /// \dontinclude AnnotatedSandwichBot/AnnotatedSandwich.cs
+    /// \skip nameof(Specials)
+    /// \until }))
+    /// 
+    /// There are a couple of pieces here:
+    /// * Advanced.Field.SetType sets the type of the field--in this case null which means enumeration.
+    /// * Advanced.Field.SetActive provides a delegate that enables the field only when the length is a foot long.  
+    /// * Advanced.Field.SetDefine provides an async delegate for defining the field.  The delegate is passed the current state object and also the Advanced.Field that is being dynamically defined.  
+    /// The delegate uses the fluent methods found on the field to dynamically define values. In this case we define values as strings and supply the descriptions and terms for the value.    
+    /// 
+    /// Messages and confirmations can also be defined dynamically.  Messages and confirmations only run when the prior steps are inactive
+    /// or are completed.  This is a confirmation that computes the cost of the sandwich:
+    /// \dontinclude AnnotatedSandwichBot/AnnotatedSandwich.cs
+    /// \skip Confirm
+    /// \until })
+    /// 
+    /// It is also possible to create a %FormFlow experience without any C# class at all.  The easiest way to do that
+    /// is to derive a class from Advanced.Field and implement the Advanced.IFieldState methods to get and set values and unknown values.  
+    ///  
+    /// \subsection localizingSection Localization
+    /// Once you have a great bot working in a single language, you might want to enable it in other languages.  
+    /// The localization language is determined by the current thread's [CurrentUICulture] and [CurrentCulture].  
+    /// By default the culture comes from the Language field of the current message, but you can change that if you wish. 
+    /// Depending on your bot, there can be up to 3 different sources of localized information including:
+    /// * The built-in localization for PromptDialog and %FormFlow.  
+    /// * A resource file generated from the static strings found in your form.
+    /// * A resource file you create with strings for dynamically computed fields, messages or confirmations.
+    /// 
+    /// The static strings in a form include strings that are generated from the information in your C# class and from the strings you supply as prompts, 
+    /// templates, messages or confirmations. It does not include strings generated from built-in templates since those are already localized.  Since many strings 
+    /// are automatically generated, it is not easy to use normal C# resource strings directly.  For this reason we have provided the code to easily
+    /// extract all of the static strings in a form by either:
+    /// 1. Call IFormBuilder.SaveResource on your form to save a .resx file.
+    /// 2. Use the supplied `rview` tool included in the nuget package to generate a resource file from your .dll or .exe by specifying the assembly containing your static form building method and the path to that method.  For example, the resource file Microsoft.Bot.Sample.AnnotatedSandwichBot.SandwichOrder.resx was generated by calling:
+    /// ~~~~
+    /// rview -g Microsoft.Bot.Sample.AnnotatedSandwichBot.dll Microsoft.Bot.Sample.AnnotatedSandwichBot.SandwichOrder.BuildForm
+    /// ~~~~
+    /// Here for example are a few lines from the automatically generated .resx file:
+    /// \dontinclude AnnotatedSandwichBot/Resource/Microsoft.Bot.Sample.AnnotatedSandwichBot.SandwichOrder.resx
+    /// \skip Specials_description;VALUE
+    /// \until sandwichs?
+    /// \until data
+    /// 
+    /// In order to make use of a generated resource file, add it to your project and then set the neutral language by:
+    /// 1. Right-click on your project and select the 'Appliction' tab.
+    /// 2. Click on the 'Assembly Information' button.
+    /// 3. Select the language you developed your bot in from the `Neutral Language` drop down.
+    /// 
+    /// With these changes, when your form is created the IFormBuilder.Build method will automatically
+    /// look for resources that contain your form type name and use them to localize all of the static strings in your form. 
+    /// 
+    /// Dynamic fields defined using Advanced.Field.SetDefine cannot be localized since the strings in them are used to dynamically construct values when
+    /// actually filling out a form.  To localize these you can make use of the normal C# localization where a C# class for string resources 
+    /// is automatically generated for you. 
+    /// 
+    /// Once you have the resource files added to your project you need to localize them.  The easiest way to do this to make use of the Multilingual App Toolkit [MAT].
+    /// We use that for our own localizations.  (And would love if people want to contribute new or improved ones.)  
+    /// If you install [MAT] you can enable it on a project by:
+    /// 1. Select your project in the Visual Studio Solution Explorer
+    /// 2. Click on `Tools->Multilingual App Toolkit->Enable selection` to enable your project.
+    /// 3. Right click on the project and select `Multilingual App Toolkit->Add Translations` to select the translations.
+    /// This will create industry standard [XLF] files which you can then automatically or manually translate.  
+    /// 
+    /// Putting this all together, here is what the Annotated Sandwich %Bot form builder would look like where the dynamic C# resources are found in DynamicSandwich:
+    /// \dontinclude AnnotatedSandwichBot/AnnotatedSandwich.cs
+    /// \skip BuildLocalizedForm
+    /// \until return form
+    /// \until };
+    /// 
+    /// And here is a snippet of a dialog generated by that form when the CurrentUICulture is French.
+    /// ~~~
+    /// Bienvenue sur le bot d'ordre "sandwich" !
+    /// Quel genre de "sandwich" vous souhaitez sur votre "sandwich"?
+    ///  1. BLT
+    ///  2. Jambon Forêt Noire
+    ///  3. Poulet Buffalo
+    ///  4. Faire fondre le poulet et Bacon Ranch
+    ///  5. Combo de coupe à froid
+    ///  6. Boulette de viande Marinara
+    ///  7. Poulet rôti au four
+    ///  8. Rôti de boeuf
+    ///  9. Rotisserie poulet
+    ///  10. Italienne piquante
+    ///  11. Bifteck et fromage
+    ///  12. Oignon doux Teriyaki
+    ///  13. Thon
+    ///  14. Poitrine de dinde
+    ///  15. Veggie
+    /// > 2
+    /// 
+    /// Quel genre de longueur vous souhaitez sur votre "sandwich"?
+    ///  1. Six pouces
+    ///  2. Pied Long
+    /// > ?
+    /// * Vous renseignez le champ longueur.Réponses possibles:
+    /// * Vous pouvez saisir un numéro 1-2 ou des mots de la description. (Six pouces, ou Pied Long)
+    /// * Retourner à la question précédente.
+    /// * Assistance: Montrez les réponses possibles.
+    /// * Abandonner: Abandonner sans finir
+    /// * Recommencer remplir le formulaire. (Vos réponses précédentes sont enregistrées.)
+    /// * Statut: Montrer le progrès en remplissant le formulaire jusqu'à présent.
+    /// * Vous pouvez passer à un autre champ en entrant son nom. ("Sandwich", Longueur, Pain, Fromage, Nappages, Sauces, Adresse de remise, Délai de livraison, ou votre expérience aujourd'hui).
+    /// Quel genre de longueur vous souhaitez sur votre "sandwich"?
+    ///  1. Six pouces
+    ///  2. Pied Long
+    /// > 1
+    ///
+    /// Quel genre de pain vous souhaitez sur votre "sandwich"?
+    ///  1. Neuf grains de blé
+    ///  2. Neuf grains miel avoine
+    ///  3. Italien
+    ///  4. Fromage et herbes italiennes
+    ///  5. Pain plat
+    /// > neuf
+    /// Par pain "neuf" vouliez-vous dire (1. Neuf grains miel avoine, ou 2. Neuf grains de blé)
+    /// ...
+    /// ~~~
+    /// 
+    /// \subsection jsonForms JSON Schema FormFlow 
+    /// In the examples we have seen so far, forms have been defined by a C# class. 
+    /// An alternative way to define your forms is to use [JObject] as your state and define the schema
+    /// through [JSON Schema].  The schema provides a way of describing the fields that make up your [JObject] 
+    /// and also allow annotations similar to C# attributes for controlling prompts, templates and terms.  
+    /// The advantage of using a [JObject] for your state is that the form definition is entirely driven by data
+    /// rather than the static definition of your type in C#.
+    /// 
+    /// %FormFlow makes use of a number of standard [JSON Schema] keywords including:
+    /// * `type` -- Defines the fields type.
+    /// * `enum` -- Defines the possible field values.
+    /// * `minimum` -- Defines the minimum allowed value as described in <see cref="NumericAttribute"/>.
+    /// * `maximum` -- Defines the maximum allowed value as described in <see cref="NumericAttribute"/>.
+    /// * `required` -- Defines what fields are required.
+    /// 
+    /// Templates and prompts use the same vocabulary as <see cref="TemplateAttribute"/> and <see cref="PromptAttribute"/>.  
+    /// The property names are the same and the values are the same as those in the underlying C# enumeration.  
+    /// For example to define a template to override the <see cref="TemplateUsage.NotUnderstood"/> template
+    /// and specify a [ChoiceStyle], you would put this in your schema:
+    /// ~~~
+    /// "Templates":{ "NotUnderstood": { Patterns: ["I don't get it"], "ChoiceStyle":"Auto"}}
+    /// ~~~
+    /// 
+    /// %FormFlow %Extensions defined at the root of a schema or as a peer of the `type` property.  
+    /// * `Templates:{TemplateUsage: { Patterns:[string, ...], &lt;args&gt; }, ...}` -- Define templates.
+    /// * `Prompt: { Patterns:[string, ...] &lt;args&gt;}` -- Define a prompt.
+    /// 
+    /// %FormFlow %Extensions found in a property description as peers to the `type` property of a JSON Schema.
+    /// * `DateTime:bool` -- Marks a field as being a DateTime field.
+    /// * `Describe:string` -- Description of a field.
+    /// * `Terms:[string ,...]` -- Regular expressions for matching a field.
+    /// * `MaxPhrase:int` -- This will run your terms through Advanced.Language.GenerateTerms to expand them.
+    /// * `Values:{ string: {Describe:string, Terms:[string, ...], MaxPhrase}, ...}` -- The string must be found in the types "enum" and this allows you to override the automatically generated descriptions and terms.  If MaxPhrase is specified the terms are passed through <see cref="Language.GenerateTerms(string, int)"/>.
+    /// 
+    /// The simplest way to define your form is to just call Extensions.AddRemainingFields, but you can also define each field
+    /// explicitly.  Here for example is the [JSON Schema] that corresponds to the Annotated Sandwich %Bot we have defined so far.
+    /// \include AnnotatedSandwichBot/AnnotatedSandwich.json
+    /// 
+    /// In order to make use of your [JSON Schema] you use FormBuilder over a [JObject] and can make use of the same
+    /// kind of methods as you would with a C# class only parameterized by the JSON schema.  
+    /// The Advanced.FieldJson class is the underlying implementation of Advanced.Field and it 
+    /// can be used and localized in exactly the same way as Advanced.FieldReflector.  Here is a static method for 
+    /// building a [JSON Schema] form that has exactly the same functionality we have defined so far:
+    /// \dontinclude AnnotatedSandwichBot/AnnotatedSandwich.cs
+    /// \skip BuildJsonForm
+    /// \until .Build
+    /// \until }
+    ///
+    /// \subsection quitExceptions Handling Quit and Exceptions
+    /// When the user types 'quit' or there is an exception while filling in a form using FormDialog it is useful to be able
+    /// to know what step the 'quit' or exception happened, the state of the form and and what steps were successfully completed.
+    /// All of these are passed back through the FormCanceledException<T> class.  Here is an example of how to catch the exception and send
+    /// a message after either:
+    /// * Successfully processing the order.  
+    /// * When the user quit.  
+    /// * When there is an exception.
+    /// \dontinclude AnnotatedSandwichBot/Controllers/MessagesController.cs
+    /// \skip MakeRootDialog
+    /// \until });
+    /// \until }
+    /// 
+    /// \subsection finalBot Final Sandwich Bot
     /// Here is the final SandwichOrder with attributes, business logic and a more complex form.
     /// \include AnnotatedSandwichBot/AnnotatedSandwich.cs
     /// 
@@ -612,7 +819,7 @@
     ///  4. Chicken And Bacon Ranch Melt
     ///  5. Cold Cut Combo
     ///  6. Meatball Marinara
-    ///  7. Over Roasted Chicken
+    ///  7. Oven Roasted Chicken
     ///  8. Roast Beef
     ///  9. Rotisserie Style Chicken
     ///  10. Spicy Italian
@@ -623,7 +830,7 @@
     ///  15. Veggie
     /// > 2
     /// What size of sandwich do you want? (1. Six Inch, 2. Foot Long)
-    /// > 1
+    /// > 2
     /// What kind of bread would you like on your sandwich?
     ///  1. Nine Grain Wheat
     ///  2. Nine Grain Honey Oat
@@ -631,7 +838,7 @@
     ///  4. Italian Herbs And Cheese
     ///  5. Flatbread
     /// > nine grain
-    /// By "nine grain" bread did you mean(1. Nine Grain Honey Oat, 2. Nine Grain Wheat)
+    /// By "nine grain" bread did you mean (1. Nine Grain Honey Oat, 2. Nine Grain Wheat)
     /// > 1
     /// What kind of cheese would you like on your sandwich? (current choice: No Preference)
     ///  1. American
@@ -654,7 +861,7 @@
     /// > everything but jalapenos
     /// For sandwich toppings you have selected Avocado, Banana Peppers, Cucumbers, Green Bell Peppers, Lettuce, Olives, Pickles, Red Onion, Spinach, and Tomatoes.
     ///
-    /// Please select one or more sauces(current choice: No Preference)
+    /// Please select one or more sauces (current choice: No Preference)
     ///  1. Honey Mustard
     ///  2. Light Mayonnaise
     ///  3. Regular Mayonnaise
@@ -665,20 +872,29 @@
     ///  8. Sweet Onion
     ///  9. Vinegar
     /// >
+    /// What kind of specials would you like on your sandwich? (current choice: None)
+    ///  1. Free cookie
+    ///  2. Free large drink
+    /// > 1
+    /// Total for your sandwich is $6.50 is that ok?
+    /// >  y
     /// Please enter delivery address
     /// > 123 State Street
     /// What time do you want your sandwich delivered? (current choice: No Preference)
-    /// > 4:30
-    /// Do you want to order your Six Inch Black Forest Ham on Nine Grain Honey Oat bread with Pepperjack, Avocado, Banana Peppers, Cucumbers, Green Bell Peppers, Lettuce, Olives, Pickles, Red Onion, Spinach, and Tomatoes to be sent to 123 State Street at 4:30 PM?
+    /// > 4:30pm
+    /// Do you want to order your Foot Long Black Forest Ham on Nine Grain Honey Oat bread with Pepperjack, Avocado, Banana Peppers, Cucumbers, Green Bell Peppers, Lettuce, Olives, Pickles, Red Onion, Spinach, and Tomatoes to be sent to 123 State Street at 4:30 PM?
     /// > y
     /// Please enter a number between 1.0 and 5.0 for your experience today(current choice: No Preference)
     /// > 5
     /// Thanks for ordering a sandwich!
+    /// Processed your order!
     /// ~~~
     /// 
     /// \section initialState Passing in Initial Form State and Entities
     /// When you launch a FormDialog, you can optionally pass in an instance of your state.
-    /// If you do that, any step for filling a field is skipped if that field has a value.
+    /// If you do that, any step for filling a field is skipped if that field has a value unless you pass in
+    /// FormOptions.PromptFieldsWithValues which will prompt for fields, but use the passed in state for defaults.
+    /// 
     /// You can also pass in [LUIS] entities to bind to the state.  If the [EntityRecommendation.Type]
     /// is a path to a field in your C# class then the [EntityRecommendation.Entity] will be 
     /// passed through the recognizer to bind to your field.  Just like initial state, any step for 
