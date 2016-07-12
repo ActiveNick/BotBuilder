@@ -11,7 +11,7 @@ namespace Microsoft.Bot.Sample.EchoBot
     [Serializable]
     public class EchoAttachmentDialog : EchoDialog
     {
-        public override async Task MessageReceivedAsync(IDialogContext context, IAwaitable<Message> argument)
+        public override async Task MessageReceivedAsync(IDialogContext context, IAwaitable<IMessageActivity> argument)
         {
             var message = await argument;
             if (message.Text.ToLower() == "makeattachment")
@@ -21,25 +21,33 @@ namespace Microsoft.Bot.Sample.EchoBot
 
                 reply.Attachments = new List<Attachment>();
 
-                var actions = new List<Microsoft.Bot.Connector.Action>();
+                var actions = new List<CardAction>();
                 for (int i = 0; i < 3; i++)
                 {
-                    actions.Add(new Microsoft.Bot.Connector.Action
+                    actions.Add(new CardAction
                     {
                         Title = $"Button:{i}",
-                        Message = $"Action:{i}"
+                        Value = $"Action:{i}", 
+                        Type = ActionTypes.ImBack
                     });
                 }
-
-                for (int i = 0; i < 10; i++)
+                reply.AttachmentLayout = AttachmentLayoutTypes.Carousel; 
+                for (int i = 0; i < 5; i++)
                 {
-                    reply.Attachments.Add(new Attachment
-                    {
-                        Title = $"title{i}",
-                        ContentType = "image/jpeg",
-                        ContentUrl = $"https://placeholdit.imgix.net/~text?txtsize=35&txt=image{i}&w=120&h=120",
-                        Actions = actions
-                    });
+                    reply.Attachments.Add(
+                         new HeroCard
+                         {
+                             Title = $"title{i}",
+                             Images = new List<CardImage>
+                            {
+                                new CardImage
+                                {
+                                    Url = $"https://placeholdit.imgix.net/~text?txtsize=35&txt=image{i}&w=120&h=120"
+                                }
+                            },
+                             Buttons = actions
+                         }.ToAttachment()
+                    );
                 }
                 await context.PostAsync(reply);
                 context.Wait(MessageReceivedAsync);

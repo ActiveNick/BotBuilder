@@ -30,12 +30,12 @@ namespace Microsoft.Bot.Sample.SimpleFacebookAuthBot
         public static readonly Uri FacebookOauthCallback = new Uri("http://localhost:4999/api/OAuthCallback");
 
         /// <summary>
-        /// The key that is used to keep the AccessToken in <see cref="Microsoft.Bot.Builder.Dialogs.Internals.IBotData.PerUserInConversationData"/>
+        /// The key that is used to keep the AccessToken in <see cref="Microsoft.Bot.Builder.Dialogs.Internals.IBotData.PrivateConversationData"/>
         /// </summary>
         public static readonly string AuthTokenKey = "AuthToken";
 
         /// <summary>
-        /// The pending message that is written to the <see cref="Microsoft.Bot.Builder.Dialogs.Internals.IBotData.PerUserInConversationData"/>
+        /// The pending message that is written to the <see cref="Microsoft.Bot.Builder.Dialogs.Internals.IBotData.PrivateConversationData"/>
         /// when bot is waiting for the response from the callback
         /// </summary>
         public readonly ResumptionCookie ResumptionCookie;
@@ -44,7 +44,7 @@ namespace Microsoft.Bot.Sample.SimpleFacebookAuthBot
         /// Constructs an instance of the SimpleFacebookAuthDialog
         /// </summary>
         /// <param name="msg"></param>
-        public SimpleFacebookAuthDialog(Message msg)
+        public SimpleFacebookAuthDialog(IMessageActivity msg)
         {
             ResumptionCookie = new ResumptionCookie(msg);
         }
@@ -55,7 +55,7 @@ namespace Microsoft.Bot.Sample.SimpleFacebookAuthBot
         public static readonly IDialog<string> dialog = Chain
             .PostToChain()
             .Switch(
-                new Case<Message, IDialog<string>>((msg) =>
+                new Case<IMessageActivity, IDialog<string>>((msg) =>
                 {
                     var regex = new Regex("^login", RegexOptions.IgnoreCase);
                     return regex.IsMatch(msg.Text);
@@ -73,22 +73,22 @@ namespace Microsoft.Bot.Sample.SimpleFacebookAuthBot
                            return Chain.Return($"Your are logged in as: {name}");
                        });
                 }),
-                new Case<Message, IDialog<string>>((msg) =>
+                new Case<IMessageActivity, IDialog<string>>((msg) =>
                 {
                     var regex = new Regex("^logout", RegexOptions.IgnoreCase);
                     return regex.IsMatch(msg.Text);
                 }, (ctx, msg) =>
                 {
                     // Clearing user related data upon logout
-                    ctx.PerUserInConversationData.RemoveValue(AuthTokenKey);
+                    ctx.PrivateConversationData.RemoveValue(AuthTokenKey);
                     ctx.UserData.RemoveValue("name");
                     return Chain.Return($"Your are logged out!");
                 }),
-                new DefaultCase<Message, IDialog<string>>((ctx, msg) =>
+                new DefaultCase<IMessageActivity, IDialog<string>>((ctx, msg) =>
                 {
                     string token;
                     string name = string.Empty; 
-                    if (ctx.PerUserInConversationData.TryGetValue(AuthTokenKey, out token) && ctx.UserData.TryGetValue("name", out name))
+                    if (ctx.PrivateConversationData.TryGetValue(AuthTokenKey, out token) && ctx.UserData.TryGetValue("name", out name))
                     {
                         var validationTask = FacebookHelpers.ValidateAccessToken(token);
                         validationTask.Wait();
@@ -114,7 +114,7 @@ namespace Microsoft.Bot.Sample.SimpleFacebookAuthBot
             await LogIn(context);
         }
 
-        private async Task MessageReceivedAsync(IDialogContext context, IAwaitable<Message> argument)
+        private async Task MessageReceivedAsync(IDialogContext context, IAwaitable<IMessageActivity> argument)
         {
             var msg = await (argument);
             if (msg.Text.StartsWith("token:"))
@@ -122,7 +122,7 @@ namespace Microsoft.Bot.Sample.SimpleFacebookAuthBot
                 // Dialog is resumed by the OAuth callback and access token
                 // is encoded in the message.Text
                 var token = msg.Text.Remove(0, "token:".Length);
-                context.PerUserInConversationData.SetValue(AuthTokenKey, token);
+                context.PrivateConversationData.SetValue(AuthTokenKey, token);
                 context.Done(token);
             }
             else
@@ -139,9 +139,9 @@ namespace Microsoft.Bot.Sample.SimpleFacebookAuthBot
         private async Task LogIn(IDialogContext context)
         {
             string token;
-            if (!context.PerUserInConversationData.TryGetValue(AuthTokenKey, out token))
+            if (!context.PrivateConversationData.TryGetValue(AuthTokenKey, out token))
             {
-                context.PerUserInConversationData.SetValue("persistedCookie", ResumptionCookie);
+                context.PrivateConversationData.SetValue("persistedCookie", ResumptionCookie);
                 var fbLogin = $"Go to: {FacebookHelpers.GetFacebookLoginURL(ResumptionCookie, FacebookOauthCallback.ToString())}";
 
                 await context.PostAsync(fbLogin);

@@ -50,10 +50,6 @@
       <HintPath>..\packages\Chronic.Signed.0.3.2\lib\net40\Chronic.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Include="Microsoft.Bot.Connector, Version=1.1.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
-      <HintPath>..\packages\Microsoft.Bot.Connector.1.1.0.0\lib\net45\Microsoft.Bot.Connector.dll</HintPath>
-      <Private>True</Private>
-    </Reference>
     <Reference Include="Microsoft.Rest.ClientRuntime, Version=1.0.0.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
       <HintPath>..\packages\Microsoft.Rest.ClientRuntime.1.8.2\lib\net45\Microsoft.Rest.ClientRuntime.dll</HintPath>
       <Private>True</Private>
@@ -67,6 +63,7 @@
       <Private>True</Private>
     </Reference>
     <Reference Include="System" />
+    <Reference Include="System.Configuration" />
     <Reference Include="System.Core" />
     <Reference Include="System.Net" />
     <Reference Include="System.Net.Http.Formatting, Version=5.2.3.0, Culture=neutral, PublicKeyToken=31bf3856ad364e35, processorArchitecture=MSIL">
@@ -88,6 +85,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="Dialogs\DeleteProfileScorable.cs" />
     <Compile Include="Dialogs\DialogModule.cs" />
     <Compile Include="Dialogs\BotData.cs" />
     <Compile Include="Dialogs\BotToUser.cs" />
@@ -95,6 +93,7 @@
     <Compile Include="Dialogs\Conversation.cs" />
     <Compile Include="Dialogs\DialogContext.cs" />
     <Compile Include="Dialogs\Chain.cs" />
+    <Compile Include="Dialogs\Exceptions.cs" />
     <Compile Include="Dialogs\ResumptionCookie.cs" />
     <Compile Include="Dialogs\Scorable.cs" />
     <Compile Include="Dialogs\DialogTask.cs" />
@@ -111,7 +110,6 @@
     <Compile Include="Dialogs\IBotData.cs" />
     <Compile Include="Dialogs\IDialog.cs" />
     <Compile Include="Dialogs\IDialogContext.cs" />
-    <Compile Include="FormFlow\FieldJson.cs" />
     <Compile Include="FormFlow\FieldReflector.cs" />
     <Compile Include="Fibers\Traits.cs" />
     <Compile Include="FormFlow\Localizer.cs" />
@@ -163,6 +161,7 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="app.config" />
+    <None Include="createallpackages.cmd" />
     <None Include="createpackage.cmd" />
     <None Include="Luis\generateLuisModels.bat" />
     <None Include="Luis\Luis-q.json" />
@@ -170,7 +169,7 @@
       <SubType>Designer</SubType>
     </None>
     <None Include="packages.config" />
-    <None Include="pushpackage.cmd" />
+    <None Include="pushpackages.cmd" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="Resource\Resources.ar.resx">
@@ -204,6 +203,12 @@
     <XliffResource Include="MultilingualResources\Microsoft.Bot.Builder.ja.xlf" />
     <XliffResource Include="MultilingualResources\Microsoft.Bot.Builder.ru.xlf" />
     <XliffResource Include="MultilingualResources\Microsoft.Bot.Builder.zh-Hans.xlf" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="Microsoft.Bot.Connector\Microsoft.Bot.Connector.csproj">
+      <Project>{df397efc-91db-4911-9971-c509926fc288}</Project>
+      <Name>Microsoft.Bot.Connector</Name>
+    </ProjectReference>
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="$(MSBuildExtensionsPath)\Microsoft\Multilingual App Toolkit\Microsoft.Multilingual.ResxResources.targets" Label="MultilingualAppToolkit" Condition="Exists('$(MSBuildExtensionsPath)\Microsoft\Multilingual App Toolkit\Microsoft.Multilingual.ResxResources.targets')" />

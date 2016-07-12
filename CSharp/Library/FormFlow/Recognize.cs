@@ -52,7 +52,7 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
         /// </summary>
         /// <param name="value">C# value to get description for.</param>
         /// <returns>Description of C# value.</returns>
-        public delegate string DescriptionDelegate(object value);
+        public delegate DescribeAttribute DescriptionDelegate(object value);
 
         /// <summary>
         /// Delegate to return the terms to match on for a C# value.
@@ -80,7 +80,7 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
                 : (field.AllowsMultiple ? TemplateUsage.EnumManyWordHelp : TemplateUsage.EnumOneWordHelp));
             _noPreference = field.Optional ? field.Form.Configuration.NoPreference : null;
             _currentChoice = field.Form.Configuration.CurrentChoice.FirstOrDefault();
-            BuildPerValueMatcher(field.Form.Configuration.CurrentChoice);
+            BuildPerValueMatcher(from term in field.Form.Configuration.CurrentChoice select Regex.Escape(term));
         }
 
         public object[] PromptArgs()
@@ -93,12 +93,12 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
             return _values;
         }
 
-        public IEnumerable<string> ValueDescriptions()
+        public IEnumerable<DescribeAttribute> ValueDescriptions()
         {
             return _valueDescriptions;
         }
 
-        public string ValueDescription(object value)
+        public DescribeAttribute ValueDescription(object value)
         {
             return _descriptionDelegate(value);
         }
@@ -110,7 +110,7 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
 
         public string Help(T state, object defaultValue)
         {
-            var values = _valueDescriptions;
+            var values = (from val in _valueDescriptions select val.Description);
             var max = _max;
             if (_noPreference != null)
             {
@@ -122,7 +122,7 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
             }
             if ((defaultValue != null || _noPreference != null) && _currentChoice != null)
             {
-                values = values.Union(new string[] { _currentChoice } );
+                values = values.Union(new string[] { _currentChoice });
             }
             var args = new List<object>();
             if (_allowNumbers)
@@ -155,31 +155,30 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
                 {
                     var group1 = match.Groups[1];
                     var group2 = match.Groups[2];
+                    var group3 = match.Groups[3];
+                    object newValue;
                     if (group1.Success)
                     {
-                        int n;
-                        var words = group1.Value.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Length;
-                        var confidence = int.TryParse(group1.Value, out n) ? 1.0 : System.Math.Min(words / maxWords, 1.0);
-                        if (expression.Value is Special)
+                        if (ConvertSpecial(expression.Value, defaultValue, out newValue))
                         {
-                            var special = (Special)expression.Value;
-                            if (special == Special.CurrentChoice && (_noPreference != null || defaultValue != null))
-                            {
-                                yield return new TermMatch(group1.Index, group1.Length, confidence, defaultValue);
-                            }
-                            else if (special == Special.NoPreference)
-                            {
-                                yield return new TermMatch(group1.Index, group1.Length, confidence, null);
-                            }
-                        }
-                        else
-                        {
-                            yield return new TermMatch(group1.Index, group1.Length, confidence, expression.Value);
+                            yield return new TermMatch(group1.Index, group1.Length, 1.0, newValue);
                         }
                     }
-                    else if (group2.Success)
+                    if (group2.Success)
                     {
-                        yield return new TermMatch(group2.Index, group2.Length, 1.0, expression.Value);
+                        var words = group2.Value.Split(new char[] { ' ' }, StringSplitOptions.RemoveEmptyEntries).Length;
+                        var confidence = System.Math.Min(words / maxWords, 1.0);
+                        if (ConvertSpecial(expression.Value, defaultValue, out newValue))
+                        {
+                            yield return new TermMatch(group2.Index, group2.Length, confidence, newValue);
+                        }
+                    }
+                    else if (group3.Success)
+                    {
+                        if (ConvertSpecial(expression.Value, defaultValue, out newValue))
+                        {
+                            yield return new TermMatch(group3.Index, group3.Length, 1.0, newValue);
+                        }
                     }
                 }
             }
@@ -236,85 +235,101 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
             return regex.Split(new string[] { @"\s", " " }, StringSplitOptions.RemoveEmptyEntries).Length;
         }
 
+        // Generate a regex with 3 parts:
+        // Group 1: startWord <number> endWord
+        // Group 2: startWord (all word terms) endWord
+        // Group 3: all nonWord terms
+        // If a group is empty, match on NOMATCH constant.
+        private const string NOMATCH = "__qqqq__";
         private int AddExpression(int n, object value, IEnumerable<string> terms, bool allowNumbers)
         {
             var orderedTerms = (from term in terms orderby term.Length descending select term).ToArray();
+            var words = new StringBuilder();
+            var nonWords = new StringBuilder();
+            var first = true;
+            var firstNonWord = true;
+            int maxWords = 0;
             if (orderedTerms.Length > 0)
             {
-                var maxWords = terms.Max((term) => NumberOfWords(term));
-                var word = new StringBuilder();
-                var nonWord = new StringBuilder();
-                var first = true;
-                var firstNonWord = true;
+                maxWords = terms.Max(NumberOfWords);
                 foreach (var term in orderedTerms)
                 {
                     var nterm = term.Trim().Replace(" ", @"\s+");
-                    if (nterm == "") nterm = "qqqq";
-                    if (_wordStart.Match(nterm).Success && _wordEnd.Match(nterm).Success)
+                    if (nterm != "")
                     {
-                        if (first)
+                        if (_wordStart.Match(nterm).Success && _wordEnd.Match(nterm).Success)
                         {
-                            first = false;
-                            word.Append(@"(\b(?:");
+                            if (first)
+                            {
+                                first = false;
+                                words.Append(@"(\b(?:");
+                            }
+                            else
+                            {
+                                words.Append('|');
+                            }
+                            words.Append(@"(?:");
+                            words.Append(nterm);
+                            words.Append(')');
                         }
                         else
                         {
-                            word.Append('|');
+                            if (firstNonWord)
+                            {
+                                firstNonWord = false;
+                                nonWords.Append('(');
+                            }
+                            else
+                            {
+                                nonWords.Append('|');
+                            }
+                            nonWords.Append(@"(?:");
+                            nonWords.Append(nterm);
+                            nonWords.Append(')');
                         }
-                        word.Append(@"(?:");
-                        word.Append(nterm);
-                        word.Append(')');
-                    }
-                    else
-                    {
-                        if (firstNonWord)
-                        {
-                            firstNonWord = false;
-                            nonWord.Append('(');
-                        }
-                        else
-                        {
-                            nonWord.Append('|');
-                        }
-                        nonWord.Append(@"(?:");
-                        nonWord.Append(nterm);
-                        nonWord.Append(')');
                     }
                 }
-                if (first)
-                {
-                    if (allowNumbers)
-                    {
-                        word.AppendFormat(@"({0})", n);
-                    }
-                    else
-                    {
-                        word.Append("(qqqq)");
-                    }
-                }
-                else
-                {
-                    if (allowNumbers)
-                    {
-                        word.AppendFormat(@"|{0}", n);
-                    }
-                    word.Append(@")\b)");
-                }
-                if (firstNonWord)
-                {
-                    nonWord.Append("(qqqq)");
-                }
-                else
-                {
-                    nonWord.Append(')');
-                }
-                ++n;
-                var expr = string.Format("{0}|{1}",
-                    word.ToString(),
-                    nonWord.ToString());
-                _expressions.Add(new ValueAndExpression(value, new Regex(expr, RegexOptions.IgnoreCase), maxWords));
             }
+            if (first)
+            {
+                words.Append(@"(\b(?:");
+                words.Append(NOMATCH);
+            }
+            words.Append(@")\b)");
+            if (firstNonWord)
+            {
+                nonWords.Append('(');
+                nonWords.Append(NOMATCH);
+            }
+            nonWords.Append(')');
+            var numbers = allowNumbers ? $"(\\b{n}\\b)" : NOMATCH;
+            var expr = $"{numbers}|{words.ToString()}|{nonWords.ToString()}";
+            _expressions.Add(new ValueAndExpression(value, new Regex(expr.ToString(), RegexOptions.IgnoreCase), maxWords));
+            ++n;
             return n;
+        }
+
+        private bool ConvertSpecial(object value, object defaultValue, out object newValue)
+        {
+            bool ok = true;
+            newValue = value;
+            if (value is Special)
+            {
+                var special = (Special)value;
+                if (special == Special.CurrentChoice && (_noPreference != null || defaultValue != null))
+                {
+                    newValue = defaultValue;
+                }
+                else if (special == Special.NoPreference)
+                {
+                    newValue = null;
+                }
+                else
+                {
+                    ok = false;
+                }
+            }
+            return ok;
         }
 
         private class ValueAndExpression
@@ -338,7 +353,7 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
         private readonly bool _allowNumbers;
         private readonly IEnumerable<string> _terms;
         private readonly IEnumerable<object> _values;
-        private readonly IEnumerable<string> _valueDescriptions;
+        private readonly IEnumerable<DescribeAttribute> _valueDescriptions;
         private readonly DescriptionDelegate _descriptionDelegate;
         private readonly TermsDelegate _termsDelegate;
         private readonly TemplateAttribute _helpFormat;
@@ -400,7 +415,8 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
             {
                 yield return new TermMatch(0, input.Length, 1.0, defaultValue);
             }
-            else {
+            else
+            {
                 var result = Parse(input);
                 if (result != null)
                 {
@@ -411,11 +427,11 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
 
         public abstract IEnumerable<string> ValidInputs(object value);
 
-        public abstract string ValueDescription(object value);
+        public abstract DescribeAttribute ValueDescription(object value);
 
-        public virtual IEnumerable<string> ValueDescriptions()
+        public virtual IEnumerable<DescribeAttribute> ValueDescriptions()
         {
-            return new string[0];
+            return new DescribeAttribute[0];
         }
 
         public virtual IEnumerable<object> Values()
@@ -512,16 +528,16 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
                 : _field.Form.Configuration.No;
         }
 
-        public override string ValueDescription(object value)
+        public override DescribeAttribute ValueDescription(object value)
         {
-            return ((bool)value
+            return new DescribeAttribute(((bool)value
                 ? _field.Form.Configuration.Yes
-                : _field.Form.Configuration.No).First();
+                : _field.Form.Configuration.No).First());
         }
 
-        public override IEnumerable<string> ValueDescriptions()
+        public override IEnumerable<DescribeAttribute> ValueDescriptions()
         {
-            return new string[] { ValueDescription(true), ValueDescription(false) };
+            return new DescribeAttribute[] { ValueDescription(true), ValueDescription(false) };
         }
 
         private HashSet<string> _yes;
@@ -549,9 +565,9 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
             yield return (string)value;
         }
 
-        public override string ValueDescription(object value)
+        public override DescribeAttribute ValueDescription(object value)
         {
-            return (string)value;
+            return new DescribeAttribute((string)value);
         }
 
         public override TermMatch Parse(string input)
@@ -598,9 +614,9 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
             return _showLimits ? new object[] { _min, _max } : new object[] { null, null };
         }
 
-        public override string ValueDescription(object value)
+        public override DescribeAttribute ValueDescription(object value)
         {
-            return ((long)Convert.ChangeType(value, typeof(long))).ToString(Thread.CurrentThread.CurrentUICulture.NumberFormat);
+            return new DescribeAttribute(((long)Convert.ChangeType(value, typeof(long))).ToString(Thread.CurrentThread.CurrentUICulture.NumberFormat));
         }
 
         public override IEnumerable<string> ValidInputs(object value)
@@ -662,9 +678,9 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
             return _showLimits ? new object[] { _min, _max } : new object[] { null, null };
         }
 
-        public override string ValueDescription(object value)
+        public override DescribeAttribute ValueDescription(object value)
         {
-            return ((double)Convert.ChangeType(value, typeof(double))).ToString(Thread.CurrentThread.CurrentUICulture.NumberFormat);
+            return new DescribeAttribute(((double)Convert.ChangeType(value, typeof(double))).ToString(Thread.CurrentThread.CurrentUICulture.NumberFormat));
         }
 
         public override IEnumerable<string> ValidInputs(object value)
@@ -755,12 +771,12 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
 
         public override IEnumerable<string> ValidInputs(object value)
         {
-            yield return ValueDescription(value);
+            yield return ValueDescription(value).Description;
         }
 
-        public override string ValueDescription(object value)
+        public override DescribeAttribute ValueDescription(object value)
         {
-            return ((DateTime)value).ToString(Thread.CurrentThread.CurrentUICulture.DateTimeFormat);
+            return new DescribeAttribute(((DateTime)value).ToString(Thread.CurrentThread.CurrentUICulture.DateTimeFormat));
         }
 
         private Parser _parser;

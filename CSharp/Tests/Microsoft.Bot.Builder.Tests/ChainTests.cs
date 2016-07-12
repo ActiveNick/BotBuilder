@@ -56,7 +56,7 @@ namespace Microsoft.Bot.Builder.Tests
     {
         public static void AssertQueryText(string expectedText, ILifetimeScope container)
         {
-            var queue = container.Resolve<Queue<Message>>();
+            var queue = container.Resolve<Queue<IMessageActivity>>();
             var texts = queue.Select(m => m.Text).ToArray();
             // last message is re-prompt, next-to-last is result of query expression
             var actualText = texts.Reverse().ElementAt(1);
@@ -160,7 +160,7 @@ namespace Microsoft.Bot.Builder.Tests
                     await task.PostAsync(toBot, CancellationToken.None);
                 }
 
-                var queue = container.Resolve<Queue<Message>>();
+                var queue = container.Resolve<Queue<IMessageActivity>>();
                 var texts = queue.Select(m => m.Text).ToArray();
                 Assert.AreEqual(1, texts.Length);
                 Assert.AreEqual(true.ToString(), texts[0]);
@@ -192,7 +192,7 @@ namespace Microsoft.Bot.Builder.Tests
                     }
                 }
 
-                var queue = container.Resolve<Queue<Message>>();
+                var queue = container.Resolve<Queue<IMessageActivity>>();
                 var texts = queue.Select(m => m.Text).ToArray();
                 Assert.AreEqual(0, texts.Length);
             }
@@ -248,7 +248,7 @@ namespace Microsoft.Bot.Builder.Tests
                     }
                 }
 
-                var queue = container.Resolve<Queue<Message>>();
+                var queue = container.Resolve<Queue<IMessageActivity>>();
                 var texts = queue.Select(m => m.Text).ToArray();
                 CollectionAssert.AreEqual(expectedReply, texts);
             }
@@ -338,6 +338,43 @@ namespace Microsoft.Bot.Builder.Tests
         }
 
         [TestMethod]
+        public async Task SampleChain_Quiz()
+        {
+            var quiz = Chain
+                .PostToChain()
+                .Select(_ => "how many questions?")
+                .PostToUser()
+                .WaitToBot()
+                .Select(m => int.Parse(m.Text))
+                .Select(count => Enumerable.Range(0, count).Select(index => Chain.Return($"question {index + 1}?").PostToUser().WaitToBot().Select(m => m.Text)))
+                .Fold((l, r) => l + "," + r)
+                .Select(answers => "your answers were: " + answers)
+                .PostToUser();
+
+            using (var container = Build(Options.ResolveDialogFromContainer))
+            {
+                var builder = new ContainerBuilder();
+                builder
+                    .RegisterInstance(quiz)
+                    .As<IDialog<object>>();
+                builder.Update(container);
+
+                await AssertScriptAsync(container,
+                    "hello",
+                    "how many questions?",
+                    "3",
+                    "question 1?",
+                    "A",
+                    "question 2?",
+                    "B",
+                    "question 3?",
+                    "C",
+                    "your answers were: A,B,C"
+                    );
+            }
+        }
+
+        [TestMethod]
         public async Task SampleChain_Joke()
         {
             var joke = Chain
@@ -365,34 +402,22 @@ namespace Microsoft.Bot.Builder.Tests
                 .PostToUser().
                 Loop();
 
-            using (var container = Build(Options.None))
+            using (var container = Build(Options.ResolveDialogFromContainer))
             {
-                var toBot = MakeTestMessage();
+                var builder = new ContainerBuilder();
+                builder
+                    .RegisterInstance(joke)
+                    .As<IDialog<object>>();
+                builder.Update(container);
 
-                var toBotTexts = new[]
-                {
+                await AssertScriptAsync(container,
                     "chicken",
+                    "why did the chicken cross the road?",
                     "i don't know",
-                    "anything but chickens"
-                };
-
-                foreach (var word in toBotTexts)
-                {
-                    using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
-                    {
-                        DialogModule_MakeRoot.Register(scope, () => joke);
-
-                        var task = scope.Resolve<IPostToBot>();
-                        toBot.Text = word;
-                        await task.PostAsync(toBot, CancellationToken.None);
-                    }
-                }
-
-                var queue = container.Resolve<Queue<Message>>();
-                var texts = queue.Select(m => m.Text).ToArray();
-                Assert.AreEqual("why did the chicken cross the road?", texts[0]);
-                Assert.AreEqual("to get to the other side", texts[1]);
-                Assert.AreEqual("why don't you like chicken jokes?", texts[2]);
+                    "to get to the other side",
+                    "anything but chickens",
+                    "why don't you like chicken jokes?"
+                    );
             }
         }
     }

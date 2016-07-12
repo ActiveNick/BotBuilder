@@ -34,20 +34,22 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
-using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Connector;
 using Microsoft.Bot.Builder.FormFlow;
+using Microsoft.Bot.Builder.FormFlow.Json;
 using Microsoft.Bot.Builder.Dialogs.Internals;
+using Microsoft.Bot.Builder.Internals.Fibers;
+using Microsoft.Bot.Builder.Luis.Models;
 
 using Moq;
 using Autofac;
+using Newtonsoft.Json.Linq;
 
 using Microsoft.VisualStudio.TestTools.UnitTesting;
-
 
 namespace Microsoft.Bot.Builder.Tests
 {
@@ -63,83 +65,168 @@ namespace Microsoft.Bot.Builder.Tests
             float Float { get; set; }
         }
 
-        [TestMethod]
-        public async Task Can_Fill_In_Scalar_Types()
+        private static class Input
         {
-            var mock = new Mock<IFormTarget>();
-            mock.SetupAllProperties();
+            public const string Text = "some text here";
+            public const int Integer = 99;
+            public const float Float = 1.5f;
+        }
 
-            Func<IDialog<IFormTarget>> MakeRoot = () => new FormDialog<IFormTarget>(mock.Object);
+        [Serializable]
+        private sealed class FormTarget : IFormTarget
+        {
+            float IFormTarget.Float { get; set; }
+            int IFormTarget.Integer { get; set; }
+            string IFormTarget.Text { get; set; }
+        }
 
-            // arrange
-            var toBot = MakeTestMessage();
-
-            using (new FiberTests.ResolveMoqAssembly(mock.Object))
-            using (var container = Build(Options.ScopedQueue, mock.Object))
+        private static async Task RunScriptAgainstForm(IEnumerable<EntityRecommendation> entities, params string[] script)
+        {
+            IFormTarget target = new FormTarget();
+            using (var container = Build(Options.ResolveDialogFromContainer, target))
             {
-                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
                 {
-                    DialogModule_MakeRoot.Register(scope, MakeRoot);
-
-                    var task = scope.Resolve<IPostToBot>();
-
-                    // act
-                    await task.PostAsync(toBot, CancellationToken.None);
-
-                    // assert
-                    AssertMentions(nameof(mock.Object.Text), scope);
+                    var root = new FormDialog<IFormTarget>(target, entities: entities);
+                    var builder = new ContainerBuilder();
+                    builder
+                        .RegisterInstance(root)
+                        .AsSelf()
+                        .As<IDialog<object>>();
+                    builder.Update(container);
                 }
 
-                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
+                await AssertScriptAsync(container, script);
+
                 {
-                    DialogModule_MakeRoot.Register(scope, MakeRoot);
-
-                    var task = scope.Resolve<IPostToBot>();
-
-                    // arrange
-                    // note: this can not be "text" as that is a navigation command
-                    toBot.Text = "words";
-
-                    // act
-                    await task.PostAsync(toBot, CancellationToken.None);
-
-                    // assert
-                    AssertMentions(nameof(mock.Object.Integer), scope);
+                    Assert.AreEqual(Input.Text, target.Text);
+                    Assert.AreEqual(Input.Integer, target.Integer);
+                    Assert.AreEqual(Input.Float, target.Float);
                 }
+            }
+        }
 
-                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
-                {
-                    DialogModule_MakeRoot.Register(scope, MakeRoot);
+        [TestMethod]
+        public async Task Form_Can_Fill_In_Scalar_Types()
+        {
+            IEnumerable<EntityRecommendation> entities = Enumerable.Empty<EntityRecommendation>();
+            await RunScriptAgainstForm(entities,
+                    "hello",
+                    "Please enter text ",
+                    Input.Text,
+                    "Please enter a number for integer (current choice: 0)",
+                    Input.Integer.ToString(),
+                    "Please enter a number for float (current choice: 0)",
+                    Input.Float.ToString()
+                );
+        }
 
-                    var task = scope.Resolve<IPostToBot>();
+        [TestMethod]
+        public async Task Form_Can_Handle_Luis_Entity()
+        {
+            IEnumerable<EntityRecommendation> entities = new[] { new EntityRecommendation(type: nameof(IFormTarget.Text), entity: Input.Text) };
+            await RunScriptAgainstForm(entities,
+                    "hello",
+                    "Please enter a number for integer (current choice: 0)",
+                    Input.Integer.ToString(),
+                    "Please enter a number for float (current choice: 0)",
+                    Input.Float.ToString()
+                );
+        }
 
-                    // arrange
-                    toBot.Text = "3";
+        [TestMethod]
+        public async Task Form_Can_Handle_Irrelevant_Luis_Entity()
+        {
+            IEnumerable<EntityRecommendation> entities = new[] { new EntityRecommendation(type: "some random entity", entity: Input.Text) };
+            await RunScriptAgainstForm(entities,
+                    "hello",
+                    "Please enter text ",
+                    Input.Text,
+                    "Please enter a number for integer (current choice: 0)",
+                    Input.Integer.ToString(),
+                    "Please enter a number for float (current choice: 0)",
+                    Input.Float.ToString()
+                );
+        }
 
-                    // act
-                    await task.PostAsync(toBot, CancellationToken.None);
+        [TestMethod]
+        public async Task CanResolveDynamicFormFromContainer()
+        {
+            // This test has two purposes.
+            // 1. show that IFormDialog can be resolved from the container
+            // 2. show that json schema forms can be dynamically generated based on the incoming message
+            // You will likely find that the extensibility in IForm's callback methods may be sufficient enough for most scenarios.
 
-                    // assert
-                    AssertMentions(nameof(mock.Object.Float), scope);
-                }
+            using (var container = Build(Options.ResolveDialogFromContainer))
+            {
+                var builder = new ContainerBuilder();
 
-                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
-                {
-                    DialogModule_MakeRoot.Register(scope, MakeRoot);
+                // make a dynamic IForm model based on the incoming message
+                builder
+                    .Register(c =>
+                    {
+                        var message = c.Resolve<IMessageActivity>();
 
-                    var task = scope.Resolve<IPostToBot>();
+                        // use the user's name as the prompt
+                        const string TEMPLATE_PREFIX =
+                        @"
+                        {
+                          'type': 'object',
+                          'properties': {
+                            'name': {
+                              'type': 'string',
+                              'Prompt': { 'Patterns': [ '";
 
-                    // arrange
-                    toBot.Text = "3.5";
+                        const string TEMPLATE_SUFFIX =
+                        @"' ] },
+                            }
+                          }
+                        }
+                        ";
 
-                    // act
-                    await task.PostAsync(toBot, CancellationToken.None);
+                        var text = TEMPLATE_PREFIX + message.From.Id + TEMPLATE_SUFFIX;
+                        var schema = JObject.Parse(text);
 
-                    // assert
-                    AssertNoMessages(scope);
-                }
+                        return
+                            new FormBuilderJson(schema)
+                            .AddRemainingFields()
+                            .Build();
+                    })
+                    .As<IForm<JObject>>()
+                    // lifetime must match lifetime scope tag of Message, since we're dependent on the Message
+                    .InstancePerMatchingLifetimeScope(DialogModule.LifetimeScopeTag);
 
-                mock.VerifyAll();
+                builder
+                    .Register<BuildFormDelegate<JObject>>(c =>
+                    {
+                        var cc = c.Resolve<IComponentContext>();
+                        return () => cc.Resolve<IForm<JObject>>();
+                    })
+                    // tell the serialization framework to recover this delegate from the container
+                    // rather than trying to serialize it with the dialog
+                    // normally, this delegate is a static method that is trivially serializable without any risk of a closure capturing the environment
+                    .Keyed<BuildFormDelegate<JObject>>(FiberModule.Key_DoNotSerialize)
+                    .AsSelf()
+                    .InstancePerMatchingLifetimeScope(DialogModule.LifetimeScopeTag);
+
+                builder
+                    .RegisterType<FormDialog<JObject>>()
+                    // root dialog is an IDialog<object>
+                    .As<IDialog<object>>()
+                    .InstancePerMatchingLifetimeScope(DialogModule.LifetimeScopeTag);
+
+                builder
+                    // our default form state
+                    .Register<JObject>(c => new JObject())
+                    .AsSelf()
+                    .InstancePerDependency();
+
+                builder.Update(container);
+
+                // verify that the form dialog prompt is dynamically generated from the incoming message
+                await AssertScriptAsync(container,
+                    "hello",
+                    ChannelID.User
+                    );
             }
         }
     }

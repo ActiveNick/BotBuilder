@@ -61,7 +61,7 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
         TemplateBaseAttribute Annotation { get; }
 
         /// <summary>
-        /// Return string to send to user.
+        /// Return prompt to send to user.
         /// </summary>
         /// <param name="state">Current form state.</param>
         /// <param name="path">Current field being processed.</param>
@@ -177,16 +177,29 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
             return buttons; 
         }
 
-        internal static IList<Attachment> GenerateAttachments(this IList<FormButton> buttons)
+        internal static IList<Attachment> GenerateAttachments(this IList<FormButton> buttons, string text)
         {
-            var attachments = new List<Attachment>();
-            var actions = new List<Connector.Action>(); 
+            var actions = new List<CardAction>(); 
             foreach(var button in buttons)
             {
-                actions.Add(new Connector.Action(button.Title, button.Image, button.Message, button.Url));
+                CardAction action; 
+                if (button.Url != null)
+                {
+                    action = new CardAction(ActionTypes.OpenUrl, button.Title, button.Image, button.Url);
+                }
+                else
+                {
+                    action = new CardAction(ActionTypes.ImBack, button.Title, button.Image, button.Message ?? button.Title);
+                }
+
+                actions.Add(action);
             }
 
-            attachments.Add(new Attachment { Actions = actions });
+            var attachments = new List<Attachment>();
+            if (actions.Count > 0)
+            {
+                attachments.Add(new HeroCard(text: text, buttons: actions).ToAttachment());
+            }
             return attachments;
         }
 
@@ -351,9 +364,10 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
                 {
                     var builder = new StringBuilder();
                     var values = _recognizer.ValueDescriptions();
-                    if (_annotation.AllowDefault != BoolDefault.False && field.Optional && !field.IsUnknown(state))
+                    var useButtons = !field.AllowsMultiple && _annotation.ChoiceStyle == ChoiceStyleOptions.Auto;
+                    if (values.Any() && _annotation.AllowDefault != BoolDefault.False && field.Optional)
                     {
-                        values = values.Concat(new string[] { Language.Normalize(noValue, _annotation.ChoiceCase) });
+                        values = values.Concat(new DescribeAttribute[] { new DescribeAttribute(Language.Normalize(noValue, _annotation.ChoiceCase)) });
                     }
                     string current = null;
                     if (_annotation.AllowDefault != BoolDefault.False)
@@ -370,15 +384,14 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
                             current = ExpandTemplate(currentChoice, null, noValue, state, pathName, args, ref buttons);
                         }
                     }
-                    if (values.Count() > 0)
+                    if (values.Any())
                     {
-                        if (!field.AllowsMultiple && _annotation.ChoiceStyle == ChoiceStyleOptions.Auto)
+                        if (useButtons)
                         {
-                            // Buttons do not support multiple selection so we fall back to text
                             int i = 1;
                             foreach(var value in values)
                             {
-                                var button = new FormButton() { Title = value };
+                                var button = new FormButton() { Title = value.Description, Image = value.Image };
                                 if (_annotation.AllowNumbers)
                                 {
                                     button.Message = i.ToString();
@@ -389,6 +402,7 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
                         }
                         else
                         {
+                            // Buttons do not support multiple selection so we fall back to text
                             if (((_annotation.ChoiceStyle == ChoiceStyleOptions.Auto || _annotation.ChoiceStyle == ChoiceStyleOptions.AutoText)
                                 && values.Count() < 4)
                                 || (_annotation.ChoiceStyle == ChoiceStyleOptions.Inline))
@@ -399,7 +413,7 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
                                 var i = 1;
                                 foreach (var value in values)
                                 {
-                                    choices.Add(string.Format(_annotation.ChoiceFormat, i, Language.Normalize(value, _annotation.ChoiceCase)));
+                                    choices.Add(string.Format(_annotation.ChoiceFormat, i, Language.Normalize(value.Description, _annotation.ChoiceCase)));
                                     ++i;
                                 }
                                 builder.Append(Language.BuildList(choices, _annotation.ChoiceSeparator, _annotation.ChoiceLastSeparator));
@@ -426,7 +440,7 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
                                     {
                                         builder.Append("* ");
                                     }
-                                    builder.AppendFormat(_annotation.ChoiceFormat, i, Language.Normalize(value, _annotation.ChoiceCase));
+                                    builder.AppendFormat(_annotation.ChoiceFormat, i, Language.Normalize(value.Description, _annotation.ChoiceCase));
                                     ++i;
                                 }
                             }
@@ -574,7 +588,7 @@ namespace Microsoft.Bot.Builder.FormFlow.Advanced
             }
             else
             {
-                result = field.Prompt.Recognizer.ValueDescription(value);
+                result = field.Prompt.Recognizer.ValueDescription(value).Description;
             }
             return result;
         }

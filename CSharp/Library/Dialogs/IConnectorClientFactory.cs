@@ -51,94 +51,49 @@ namespace Microsoft.Bot.Builder.Dialogs.Internals
         /// Make the IConnectorClient implementation.
         /// </summary>
         /// <returns>The IConnectorClient implementation.</returns>
-        IConnectorClient Make();
+        IConnectorClient MakeConnectorClient();
+
+        /// <summary>
+        /// Make the <see cref="IStateClient"/> implementation.
+        /// </summary>
+        /// <returns>The <see cref="IStateClient"/> implementation.</returns>
+        IStateClient MakeStateClient(); 
     }
 
-    public sealed class DetectEmulatorFactory : IConnectorClientFactory
+    public sealed class ConnectorClientFactory : IConnectorClientFactory
     {
-        private readonly Uri emulator;
-        private readonly bool? isEmulator;
-        private readonly ConnectorClientCredentials credentials;
-        public DetectEmulatorFactory(Message message, Uri emulator, ConnectorClientCredentials credentials)
+        private readonly Uri serviceUri;
+        private readonly IMessageActivity message; 
+        private readonly MicrosoftAppCredentials credentials;
+        private readonly bool? isEmulator; 
+        public ConnectorClientFactory(IMessageActivity message, MicrosoftAppCredentials credentials)
         {
-            SetField.CheckNull(nameof(message), message);
-            var channel = message.From;
-            this.isEmulator = channel?.ChannelId?.Equals("emulator", StringComparison.OrdinalIgnoreCase);
-            SetField.NotNull(out this.emulator, nameof(emulator), emulator);
+            SetField.NotNull(out this.message, nameof(message), message);
             SetField.NotNull(out this.credentials, nameof(credentials), credentials);
+            SetField.CheckNull(nameof(message.ServiceUrl), message.ServiceUrl);
+
+            this.serviceUri = new Uri(message.ServiceUrl);
+            this.isEmulator = message.ChannelId?.Equals("emulator", StringComparison.OrdinalIgnoreCase);
         }
 
-        IConnectorClient IConnectorClientFactory.Make()
+        IConnectorClient IConnectorClientFactory.MakeConnectorClient()
         {
-            if (isEmulator ?? false)
+            return new ConnectorClient(this.serviceUri, this.credentials);
+        }
+
+        IStateClient IConnectorClientFactory.MakeStateClient()
+        {
+            if(isEmulator ?? false)
             {
-                return new ConnectorClient(this.emulator, this.credentials);
+                // for emulator we should use serviceUri of the emulator for storage
+                return new StateClient(this.serviceUri, this.credentials);
             }
             else
             {
-                var client = new ConnectorClient();
-                client.Credentials = this.credentials;
-                return client;
+                // TODO: remove this when going to against production
+                //return new StateClient(new Uri("https://intercom-api-scratch.azurewebsites.net/"), this.credentials);
+                return new StateClient(this.credentials);
             }
-        }
-    }
-
-    /// <summary>
-    /// connector client extensions.
-    /// </summary>
-    public static partial class Extensions
-    {
-        /// <summary>
-        /// Loads the message data from connector. 
-        /// </summary>
-        /// <param name="client"> Instance of connector client.</param>
-        /// <param name="botId"> Id of the bot.</param>
-        /// <param name="userId"> Id of the user.</param>
-        /// <param name="conversationId"> Id of the conversation.</param>
-        /// <param name="token"> The cancellation token.</param>
-        /// <returns> A message with appropriate data fields.</returns>
-        public static async Task<Message> LoadMessageData(this IConnectorClient client, string botId, string userId, string conversationId, CancellationToken token = default(CancellationToken))
-        {
-            var continuationMessage = new Message
-            {
-                ConversationId = conversationId,
-                To = new ChannelAccount
-                {
-                    Id = botId
-                },
-                From = new ChannelAccount
-                {
-                    Id = userId
-                }
-            };
-            return await client.LoadMessageData(continuationMessage, token);
-        }
-
-        /// <summary>
-        /// Loads the message data from connector.
-        /// </summary>
-        /// <param name="client"> The connector client.</param>
-        /// <param name="continuationMessage"> The continuation message based on <see cref="ResumptionCookie"/>.</param>
-        /// <param name="token"> The cancellation token.</param>
-        /// <returns> A message with appropriate data fields.</returns>
-        public static async Task<Message> LoadMessageData(this IConnectorClient client, Message continuationMessage, CancellationToken token = default(CancellationToken))
-        {
-            var botId = continuationMessage.To.Id;
-            var userId = continuationMessage.From.Id;
-            var conversationId = continuationMessage.ConversationId; 
-            var dataRetrievalTasks = new List<Task<BotData>> {
-                client.Bots.GetConversationDataAsync(botId, conversationId, token),
-                client.Bots.GetUserDataAsync(botId, userId, token),
-                client.Bots.GetPerUserConversationDataAsync(botId, conversationId, userId, token)
-            };
-
-            await Task.WhenAll(dataRetrievalTasks);
-
-            continuationMessage.BotConversationData = dataRetrievalTasks[0].Result?.Data;
-            continuationMessage.BotUserData = dataRetrievalTasks[1].Result?.Data;
-            continuationMessage.BotPerUserInConversationData = dataRetrievalTasks[2].Result?.Data;
-
-            return continuationMessage;
         }
     }
 }

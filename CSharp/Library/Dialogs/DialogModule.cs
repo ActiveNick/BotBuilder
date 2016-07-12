@@ -42,6 +42,7 @@ using Microsoft.Bot.Connector;
 
 using Autofac;
 
+
 namespace Microsoft.Bot.Builder.Dialogs.Internals
 {
     /// <summary>
@@ -52,10 +53,10 @@ namespace Microsoft.Bot.Builder.Dialogs.Internals
         public const string BlobKey = "DialogState";
         public static readonly object LifetimeScopeTag = typeof(DialogModule);
 
-        public static ILifetimeScope BeginLifetimeScope(ILifetimeScope scope, Message message)
+        public static ILifetimeScope BeginLifetimeScope(ILifetimeScope scope, IMessageActivity message)
         {
             var inner = scope.BeginLifetimeScope(LifetimeScopeTag);
-            inner.Resolve<Message>(TypedParameter.From(message));
+            inner.Resolve<IMessageActivity>(TypedParameter.From(message));
             return inner;
         }
 
@@ -68,35 +69,61 @@ namespace Microsoft.Bot.Builder.Dialogs.Internals
             // every lifetime scope is driven by a message
 
             builder
-                .Register((c, p) => p.TypedAs<Message>())
+                .Register((c, p) => p.TypedAs<IMessageActivity>())
                 .AsSelf()
                 .InstancePerMatchingLifetimeScope(LifetimeScopeTag);
 
             // components not marked as [Serializable]
-
             builder
-                .RegisterType<ConnectorClientCredentials>()
+                .RegisterType<MicrosoftAppCredentials>()
                 .AsSelf()
                 .SingleInstance();
 
             builder
-                .Register(c => new DetectEmulatorFactory(c.Resolve<Message>(), new Uri("http://localhost:9000"), c.Resolve<ConnectorClientCredentials>()))
+                .RegisterType<BotIdResolver>()
+                .As<IBotIdResolver>()
+                .SingleInstance();
+
+            builder
+                .Register(c => new ConnectorClientFactory(c.Resolve<IMessageActivity>(), c.Resolve<MicrosoftAppCredentials>()))
                 .As<IConnectorClientFactory>()
                 .InstancePerLifetimeScope();
 
             builder
-                .Register(c => c.Resolve<IConnectorClientFactory>().Make())
+                .Register(c => c.Resolve<IConnectorClientFactory>().MakeConnectorClient())
                 .As<IConnectorClient>()
                 .InstancePerLifetimeScope();
 
             builder
-               .Register(c => new DetectChannelCapability(c.Resolve<Message>()))
+                .Register(c => c.Resolve<IConnectorClientFactory>().MakeStateClient())
+                .As<IStateClient>()
+                .InstancePerLifetimeScope(); 
+
+            builder
+               .Register(c => new DetectChannelCapability(c.Resolve<IMessageActivity>()))
                .As<IDetectChannelCapability>()
                .InstancePerLifetimeScope();
 
             builder
                 .Register(c => c.Resolve<IDetectChannelCapability>().Detect())
                 .As<IChannelCapability>()
+                .InstancePerLifetimeScope();
+            
+            builder.RegisterType<ConnectorStore>()
+                .As<IBotDataStore<BotData>>()
+                .AsSelf()
+                .InstancePerLifetimeScope();
+
+            // If bot wants to use InMemoryDataStore instead of 
+            // ConnectorStore, the below registration should be used
+            /*builder.RegisterType<InMemoryDataStore>()
+                .As<IBotDataStore<BotData>>()
+                .AsSelf()
+                .SingleInstance(); */
+
+            builder.RegisterType<CachingBotDataStore_LastWriteWins>()
+                .As<IBotDataStore>()
+                .AsSelf()
                 .InstancePerLifetimeScope();
 
             builder
@@ -105,40 +132,46 @@ namespace Microsoft.Bot.Builder.Dialogs.Internals
                 .InstancePerLifetimeScope();
 
             builder
-                .Register(c => new BotDataBagStream(c.Resolve<IBotData>().PerUserInConversationData, BlobKey))
+                .Register(c => new BotDataBagStream(c.Resolve<IBotData>().PrivateConversationData, BlobKey))
                 .As<Stream>()
                 .InstancePerLifetimeScope();
 
-            var key_PostToBot = new object();
-
             builder
                 .RegisterType<DialogTask>()
+                .AsSelf()
                 .As<IDialogStack>()
-                .Keyed<IPostToBot>(key_PostToBot)
+                .InstancePerLifetimeScope();
+
+            // Scorable implementing "/deleteprofile"
+            builder
+                .RegisterType<DeleteProfileScorable>()
+                .As<IScorable<double>>()
                 .InstancePerLifetimeScope();
 
             builder
-                .RegisterDecorator<IPostToBot>(
-                    (c, inner) =>
-                       new PersistentDialogTask(
-                        new ScoringDialogTask<double>(
-                            new LocalizedDialogTask(
-                                new ReactiveDialogTask(inner, 
-                                    c.Resolve<IDialogStack>(), 
-                                    c.Resolve<IStore<IFiberLoop<DialogTask>>>(), 
-                                    c.Resolve<Func<IDialog<object>>>())),
-                            c.Resolve<IDialogStack>(), 
-                            c.Resolve<IComparer<double>>(), 
-                            c.Resolve<ITraits<double>>(),
-                            c.Resolve<IScorable<double>[]>()), 
-                        c.Resolve<Message>(), 
-                        c.Resolve<IConnectorClient>(), 
-                        c.Resolve<IBotToUser>()),
-                    key_PostToBot)
+                .Register(c =>
+                {
+                    var cc = c.Resolve<IComponentContext>();
+
+                    Func<IPostToBot> makeInner = () =>
+                    {
+                        var task = cc.Resolve<DialogTask>();
+                        IDialogStack stack = task;
+                        IPostToBot post = task;
+                        post = new ReactiveDialogTask(post, stack, cc.Resolve<IStore<IFiberLoop<DialogTask>>>(), cc.Resolve<Func<IDialog<object>>>());
+                        post = new LocalizedDialogTask(post);
+                        post = new ScoringDialogTask<double>(post, stack, cc.Resolve<IComparer<double>>(), cc.Resolve<ITraits<double>>(), cc.Resolve<IScorable<double>[]>());
+                        return post;
+                    };
+
+                    var outer = new PersistentDialogTask(makeInner, cc.Resolve<IMessageActivity>(), cc.Resolve<IConnectorClient>(), cc.Resolve<IBotToUser>(), cc.Resolve<IBotData>());
+                    return outer;
+                })
+                .As<IPostToBot>()
                 .InstancePerLifetimeScope();
 
             builder
-                .RegisterType<SendLastInline_BotToUser>()
+                .RegisterType<AlwaysSendDirect_BotToUser>()
                 .AsSelf()
                 .As<IBotToUser>()
                 .InstancePerLifetimeScope();

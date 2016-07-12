@@ -54,16 +54,13 @@ namespace Microsoft.Bot.Builder.Tests
     {
         public interface IDialogThatFails : IDialog<object>
         {
-            Task MessageReceived(IDialogContext context, IAwaitable<Message> message);
-            Task Throw(IDialogContext context, IAwaitable<Message> message);
+            Task MessageReceived(IDialogContext context, IAwaitable<IMessageActivity> message);
+            Task Throw(IDialogContext context, IAwaitable<IMessageActivity> message);
         }
 
         [TestMethod]
         public async Task If_Root_Dialog_Throws_Propagate_Exception_Reset_Store()
         {
-            const string userId = "testUser";
-            const string botId = "testBot";
-
             var dialog = new Mock<IDialogThatFails>(MockBehavior.Loose);
 
             dialog
@@ -71,19 +68,15 @@ namespace Microsoft.Bot.Builder.Tests
                 .Returns<IDialogContext>(async context => { context.Wait(dialog.Object.MessageReceived); });
 
             dialog
-                .Setup(d => d.MessageReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()))
-                .Returns<IDialogContext, IAwaitable<Message>>(async (context, result) => { context.Wait(dialog.Object.Throw); });
+                .Setup(d => d.MessageReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()))
+                .Returns<IDialogContext, IAwaitable<IMessageActivity>>(async (context, result) => { context.Wait(dialog.Object.Throw); });
 
             dialog
-                .Setup(d => d.Throw(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()))
+                .Setup(d => d.Throw(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()))
                 .Throws<ApplicationException>();
 
             Func<IDialog<object>> MakeRoot = () => dialog.Object;
-            var toBot = new Message() {
-                From = new ChannelAccount { Id = userId },
-                ConversationId = Guid.NewGuid().ToString(),
-                To = new ChannelAccount { Id = botId }
-            };
+            var toBot = DialogTestBase.MakeTestMessage();
 
             using (new FiberTestBase.ResolveMoqAssembly(dialog.Object))
             using (var container = Build(Options.MockConnectorFactory, dialog.Object))
@@ -97,13 +90,14 @@ namespace Microsoft.Bot.Builder.Tests
                 }
 
                 dialog.Verify(d => d.StartAsync(It.IsAny<IDialogContext>()), Times.Once);
-                dialog.Verify(d => d.MessageReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()), Times.Once);
-                dialog.Verify(d => d.Throw(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()), Times.Never);
+                dialog.Verify(d => d.MessageReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()), Times.Once);
+                dialog.Verify(d => d.Throw(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()), Times.Never);
 
                 using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
                 {
                     DialogModule_MakeRoot.Register(scope, MakeRoot);
 
+                    await scope.Resolve<IBotData>().LoadAsync(default(CancellationToken));
                     var task = scope.Resolve<IDialogStack>();
                     Assert.AreNotEqual(0, task.Frames.Count);
                 }
@@ -129,23 +123,24 @@ namespace Microsoft.Bot.Builder.Tests
                 }
 
                 dialog.Verify(d => d.StartAsync(It.IsAny<IDialogContext>()), Times.Once);
-                dialog.Verify(d => d.MessageReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()), Times.Once);
-                dialog.Verify(d => d.Throw(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()), Times.Once);
+                dialog.Verify(d => d.MessageReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()), Times.Once);
+                dialog.Verify(d => d.Throw(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()), Times.Once);
 
                 //make sure that data is persisted with connector
                 using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
                 {
                     var connectorFactory = scope.Resolve<IConnectorClientFactory>();
-                    var botData = await connectorFactory.Make().Bots.GetPerUserConversationDataAsync(botId, toBot.ConversationId, userId);
-                    toBot.BotPerUserInConversationData = botData.Data;
+                    var botDataStore = scope.Resolve<IBotDataStore>();
+                    var botData = scope.Resolve<IBotData>();
+                    await botData.LoadAsync(default(CancellationToken));
+                    Assert.AreEqual(1, botData.PrivateConversationData.Count);
                 }
 
                 using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
                 {
-                    
-
                     DialogModule_MakeRoot.Register(scope, MakeRoot);
 
+                    await scope.Resolve<IBotData>().LoadAsync(default(CancellationToken));
                     var stack = scope.Resolve<IDialogStack>();
                     Assert.AreEqual(0, stack.Frames.Count);
                 }
@@ -159,8 +154,8 @@ namespace Microsoft.Bot.Builder.Tests
                 }
 
                 dialog.Verify(d => d.StartAsync(It.IsAny<IDialogContext>()), Times.Exactly(2));
-                dialog.Verify(d => d.MessageReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()), Times.Exactly(2));
-                dialog.Verify(d => d.Throw(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()), Times.Once);
+                dialog.Verify(d => d.MessageReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()), Times.Exactly(2));
+                dialog.Verify(d => d.Throw(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()), Times.Once);
             }
         }
 
@@ -189,8 +184,8 @@ namespace Microsoft.Bot.Builder.Tests
                     DialogModule_MakeRoot.Register(scope, MakeRoot);
 
                     var task = scope.Resolve<IPostToBot>();
+                    await scope.Resolve<IBotData>().LoadAsync(default(CancellationToken));
                     var stack = scope.Resolve<IDialogStack>();
-
                     Assert.AreEqual(0, stack.Frames.Count);
 
                     await task.PostAsync(toBot, CancellationToken.None);
@@ -214,8 +209,8 @@ namespace Microsoft.Bot.Builder.Tests
                 .Returns<IDialogContext>(async context => { context.Wait(dialogOne.Object.ItemReceived); });
 
             dialogOne
-                .Setup(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()))
-                .Returns<IDialogContext, IAwaitable<Message>>(async (context, message) =>
+                .Setup(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()))
+                .Returns<IDialogContext, IAwaitable<IMessageActivity>>(async (context, message) =>
                 {
                     var msg = await message;
                     await context.Forward(dialogTwo.Object, dialogOne.Object.ItemReceived<string>, msg, CancellationToken.None);
@@ -236,8 +231,8 @@ namespace Microsoft.Bot.Builder.Tests
                 .Returns<IDialogContext>(async context => { context.Wait(dialogTwo.Object.ItemReceived); });
 
             dialogTwo
-                .Setup(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()))
-                .Returns<IDialogContext, IAwaitable<Message>>(async (context, message) =>
+                .Setup(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()))
+                .Returns<IDialogContext, IAwaitable<IMessageActivity>>(async (context, message) =>
                 {
                     var msg = await message;
                     context.Done(msg.Text);
@@ -257,11 +252,11 @@ namespace Microsoft.Bot.Builder.Tests
                     await task.PostAsync(toBot, CancellationToken.None);
 
                     dialogOne.Verify(d => d.StartAsync(It.IsAny<IDialogContext>()), Times.Once);
-                    dialogOne.Verify(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()), Times.Once);
+                    dialogOne.Verify(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()), Times.Once);
                     dialogOne.Verify(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<string>>()), Times.Once);
 
                     dialogTwo.Verify(d => d.StartAsync(It.IsAny<IDialogContext>()), Times.Once);
-                    dialogTwo.Verify(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()), Times.Once);
+                    dialogTwo.Verify(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()), Times.Once);
                 }
             }
         }
@@ -291,8 +286,8 @@ namespace Microsoft.Bot.Builder.Tests
                 .Returns<IDialogContext>(async context => { context.Wait(dialogTwo.Object.ItemReceived); });
 
             dialogTwo
-                .Setup(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()))
-                .Returns<IDialogContext, IAwaitable<Message>>(async (context, message) =>
+                .Setup(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()))
+                .Returns<IDialogContext, IAwaitable<IMessageActivity>>(async (context, message) =>
                 {
                     if ((await message).Text == TriggerTextTwo)
                     {
@@ -309,32 +304,32 @@ namespace Microsoft.Bot.Builder.Tests
                 .Returns<IDialogContext>(async context => { context.Wait(dialogNew.Object.ItemReceived); });
 
             dialogNew
-                .Setup(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<Message>>()))
-                .Returns<IDialogContext, IAwaitable<Message>>(async (context, message) => { context.Done(DateTime.UtcNow); });
+                .Setup(d => d.ItemReceived(It.IsAny<IDialogContext>(), It.IsAny<IAwaitable<IMessageActivity>>()))
+                .Returns<IDialogContext, IAwaitable<IMessageActivity>>(async (context, message) => { context.Done(DateTime.UtcNow); });
 
             // ScoringDialogTask.IScorable
 
             dialogOne
                 .As<IScorable<double>>()
-                .Setup(s => s.PrepareAsync(It.IsAny<Message>(), It.IsAny<Delegate>(), It.IsAny<CancellationToken>()))
-                .Returns<Message, Delegate, CancellationToken>(async (m, d, t) => m);
+                .Setup(s => s.PrepareAsync(It.IsAny<IMessageActivity>(), It.IsAny<Delegate>(), It.IsAny<CancellationToken>()))
+                .Returns<IMessageActivity, Delegate, CancellationToken>(async (m, d, t) => m);
 
             double scoreOne = 1.0;
             dialogOne
                 .As<IScorable<double>>()
-                .Setup(s => s.TryScore(It.IsAny<Message>(), out scoreOne))
-                .Returns<Message, double>((m, s) => m.Text == TriggerTextNew);
+                .Setup(s => s.TryScore(It.IsAny<IMessageActivity>(), out scoreOne))
+                .Returns<IMessageActivity, double>((m, s) => m.Text == TriggerTextNew);
 
             dialogTwo
                 .As<IScorable<double>>()
-                .Setup(s => s.PrepareAsync(It.IsAny<Message>(), It.IsAny<Delegate>(), It.IsAny<CancellationToken>()))
-                .Returns<Message, Delegate, CancellationToken>(async (m, d, t) => m);
+                .Setup(s => s.PrepareAsync(It.IsAny<IMessageActivity>(), It.IsAny<Delegate>(), It.IsAny<CancellationToken>()))
+                .Returns<IMessageActivity, Delegate, CancellationToken>(async (m, d, t) => m);
 
             double scoreTwo = 0.5;
             dialogTwo
                 .As<IScorable<double>>()
-                .Setup(s => s.TryScore(It.IsAny<Message>(), out scoreTwo))
-                .Returns<Message, double>((m, s) => m.Text == TriggerTextNew);
+                .Setup(s => s.TryScore(It.IsAny<IMessageActivity>(), out scoreTwo))
+                .Returns<IMessageActivity, double>((m, s) => m.Text == TriggerTextNew);
 
             Func<IDialog<object>> MakeRoot = () => dialogOne.Object;
             var toBot = MakeTestMessage();
@@ -347,15 +342,16 @@ namespace Microsoft.Bot.Builder.Tests
                     DialogModule_MakeRoot.Register(scope, MakeRoot);
 
                     var task = scope.Resolve<IPostToBot>();
+                    await scope.Resolve<IBotData>().LoadAsync(default(CancellationToken));
                     var stack = scope.Resolve<IDialogStack>();
 
                     // set up dialogOne to call dialogNew when triggered
                     dialogOne
                         .As<IScorable<double>>()
-                        .Setup(s => s.PostAsync(It.IsAny<IPostToBot>(), It.IsAny<Message>(), It.IsAny<Message>(), It.IsAny<CancellationToken>()))
-                        .Returns<IPostToBot, Message, Message, CancellationToken>(async (inner, message, state, token) =>
+                        .Setup(s => s.PostAsync(It.IsAny<IPostToBot>(), It.IsAny<IMessageActivity>(), It.IsAny<IMessageActivity>(), It.IsAny<CancellationToken>()))
+                        .Returns<IPostToBot, IMessageActivity, IMessageActivity, CancellationToken>(async (inner, message, state, token) =>
                         {
-                            stack.Call(dialogNew.Object.Void<DateTime, Message>(), null);
+                            stack.Call(dialogNew.Object.Void<DateTime, IMessageActivity>(), null);
                             await stack.PollAsync(token);
                         });
 

@@ -45,6 +45,7 @@ using Microsoft.Bot.Builder.FormFlow.Advanced;
 using Microsoft.Bot.Builder.Luis;
 using Microsoft.Bot.Builder.Internals.Fibers;
 using Microsoft.Bot.Builder.Luis.Models;
+using Microsoft.Bot.Connector;
 
 namespace Microsoft.Bot.Builder.FormFlow
 {
@@ -226,49 +227,28 @@ namespace Microsoft.Bot.Builder.FormFlow
                     if (step != null)
                     {
                         var builder = new StringBuilder();
+                        var first = true;
                         foreach (var entity in entityGroup)
                         {
+                            if (first)
+                            {
+                                first = false;
+                            }
+                            else
+                            {
+                                builder.Append(' ');
+                            }
                             builder.Append(entity.Entity);
-                            builder.Append(' ');
                         }
                         inputs.Add(Tuple.Create(_form.StepIndex(step), builder.ToString()));
                     }
                 }
-                _formState.FieldInputs = (from input in inputs orderby input.Item1 descending select input).ToList();
-            }
-            if (!_options.HasFlag(FormOptions.PromptFieldsWithValues))
-            {
-                // Skip steps that already have a value if they are nullable and valid.
-                foreach (var step in _form.Steps)
+                if (inputs.Any())
                 {
-                    if (step.Type == StepType.Field
-                        && !step.Field.IsUnknown(_state)
-                        && step.Field.IsNullable)
-                    {
-                        var defined = await step.DefineAsync(_state);
-                        if (defined)
-                        {
-                            var val = step.Field.GetValue(_state);
-                            var result = await step.Field.ValidateAsync(_state, val);
-                            if (result.IsValid)
-                            {
-                                bool ok = true;
-                                double min, max;
-                                if (step.Field.Limits(out min, out max))
-                                {
-                                    var num = (double)Convert.ChangeType(val, typeof(double));
-                                    ok = (num >= min && num <= max);
-                                }
-                                if (ok)
-                                {
-                                    _formState.Step = _form.StepIndex(step);
-                                    _formState.SetPhase(StepPhase.Completed);
-                                }
-                            }
-                        }
-                    }
+                    _formState.FieldInputs = (from input in inputs orderby input.Item1 descending select input).ToList();
                 }
             }
+            await SkipSteps();
             _formState.Step = 0;
             _formState.StepState = null;
 
@@ -282,7 +262,7 @@ namespace Microsoft.Bot.Builder.FormFlow
             }
         }
 
-        public async Task MessageReceived(IDialogContext context, IAwaitable<Connector.Message> toBot)
+        public async Task MessageReceived(IDialogContext context, IAwaitable<Connector.IMessageActivity> toBot)
         {
             try
             {
@@ -312,8 +292,16 @@ namespace Microsoft.Bot.Builder.FormFlow
                     if (prompt != null)
                     {
                         var msg = context.MakeMessage();
-                        msg.Text = prompt.Prompt;
-                        msg.Attachments = prompt.Buttons.GenerateAttachments();
+                        msg.AttachmentLayout = AttachmentLayoutTypes.List;
+                        if (prompt.Buttons?.Count > 0)
+                        {
+                            msg.AttachmentLayout = AttachmentLayoutTypes.List;
+                            msg.Attachments = prompt.Buttons.GenerateAttachments(prompt.Prompt);
+                        }
+                        else
+                        {
+                            msg.Text = prompt.Prompt;
+                        }
                         await context.PostAsync(msg);
                     }
                     return prompt;
@@ -321,6 +309,7 @@ namespace Microsoft.Bot.Builder.FormFlow
                 Func<IStep<T>, IEnumerable<TermMatch>, Task<bool>> DoStepAsync = async (step, matches) =>
                 {
                     var result = await step.ProcessAsync(context, _state, _formState, stepInput, matches);
+                    await SkipSteps();
                     next = result.Next;
                     if (result.Feedback?.Prompt != null)
                     {
@@ -435,8 +424,15 @@ namespace Microsoft.Bot.Builder.FormFlow
                             {
                                 if (matches.Count() == 0 && commands.Count() == 0)
                                 {
-                                    await PostAsync(step.NotUnderstood(context, _state, _formState, toBotText));
-                                    waitForMessage = true;
+                                    await PostAsync(step.NotUnderstood(context, _state, _formState, stepInput));
+                                    if (_formState.ProcessInputs)
+                                    {
+                                        _formState.SetPhase(StepPhase.Ready);
+                                    }
+                                    else
+                                    {
+                                        waitForMessage = true;
+                                    }
                                 }
                                 else
                                 {
@@ -518,6 +514,44 @@ namespace Microsoft.Bot.Builder.FormFlow
         #endregion
 
         #region Implementation
+
+        private async Task SkipSteps()
+        {
+            if (!_options.HasFlag(FormOptions.PromptFieldsWithValues))
+            {
+                // Skip steps that already have a value if they are nullable and valid.
+                foreach (var step in _form.Steps)
+                {
+                    int stepi = _form.StepIndex(step);
+                    if (step.Type == StepType.Field
+                        && _formState.Phase(stepi) == StepPhase.Ready
+                        && !step.Field.IsUnknown(_state)
+                        && step.Field.IsNullable)
+                    {
+                        var defined = await step.DefineAsync(_state);
+                        if (defined)
+                        {
+                            var val = step.Field.GetValue(_state);
+                            var result = await step.Field.ValidateAsync(_state, val);
+                            if (result.IsValid)
+                            {
+                                bool ok = true;
+                                double min, max;
+                                if (step.Field.Limits(out min, out max))
+                                {
+                                    var num = (double)Convert.ChangeType(val, typeof(double));
+                                    ok = (num >= min && num <= max);
+                                }
+                                if (ok)
+                                {
+                                    _formState.SetPhase(stepi, StepPhase.Completed);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         private NextStep ActiveSteps(NextStep next, T state)
         {

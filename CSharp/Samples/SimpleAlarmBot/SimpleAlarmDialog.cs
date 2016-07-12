@@ -171,7 +171,7 @@ namespace Microsoft.Bot.Sample.SimpleAlarmBot
         {
             if (TryFindAlarm(result, out this.turnOff))
             {
-                PromptDialog.Confirm(context, AfterConfirming_TurnOffAlarm, "Are you sure?");
+                PromptDialog.Confirm(context, AfterConfirming_TurnOffAlarm, "Are you sure?", promptStyle: PromptStyle.None);
             }
             else
             {
@@ -202,7 +202,11 @@ namespace Microsoft.Bot.Sample.SimpleAlarmBot
             context.Wait(MessageReceived);
         }
 
-        public SimpleAlarmDialog(ILuisService service = null)
+        public SimpleAlarmDialog()
+        {
+
+        }
+        public SimpleAlarmDialog(ILuisService service)
             : base(service)
         {
         }

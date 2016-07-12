@@ -166,25 +166,25 @@ namespace Microsoft.Bot.Builder.Dialogs
         }
 
         /// <summary>
-        /// <see cref="PromptStyler.Apply{T}(ref Message, string, IList{T})"/>.
+        /// <see cref="PromptStyler.Apply(ref IMessageActivity, string)"/>.
         /// </summary>
         /// <typeparam name="T"> The type of the options.</typeparam>
         /// <param name="message"> The message.</param>
         /// <param name="prompt"> The prompt.</param>
         /// <param name="options"> The options.</param>
         /// <param name="promptStyle"> The prompt style.</param>
-        public static void Apply<T>(ref Message message, string prompt, IList<T> options, PromptStyle promptStyle)
+        public static void Apply<T>(ref IMessageActivity message, string prompt, IList<T> options, PromptStyle promptStyle)
         {
             var styler = new PromptStyler(promptStyle);
             styler.Apply(ref message, prompt, options);
         }
 
         /// <summary>
-        /// Style a prompt and populate the <see cref="Message.Text"/>.
+        /// Style a prompt and populate the <see cref="IMessageActivity.Text"/>.
         /// </summary>
         /// <param name="message"> The message that will contain the prompt.</param>
         /// <param name="prompt"> The prompt.</param>
-        public virtual void Apply(ref Message message, string prompt)
+        public virtual void Apply(ref IMessageActivity message, string prompt)
         {
             SetField.CheckNull(nameof(prompt), prompt);
             message.Text = prompt; 
@@ -200,15 +200,21 @@ namespace Microsoft.Bot.Builder.Dialogs
         /// <remarks>
         /// <typeparamref name="T"/> should implement <see cref="object.ToString"/>.
         /// </remarks>
-        public virtual void Apply<T>(ref Message message, string prompt, IList<T> options)
+        public virtual void Apply<T>(ref IMessageActivity message, string prompt, IList<T> options)
         {
             SetField.CheckNull(nameof(prompt), prompt);
             SetField.CheckNull(nameof(options), options);
             switch (PromptStyle)
             {
                 case PromptStyle.Auto:
-                    message.Text = prompt;
-                    message.AddButtons(options);
+                    if (options != null && options.Any())
+                    {
+                        message.AddHeroCard(prompt, options);
+                    }
+                    else
+                    {
+                        message.Text = prompt;
+                    }
                     break;
                 case PromptStyle.AutoText:
                     Apply(ref message, prompt, options, options?.Count() > 4 ? PromptStyle.PerLine : PromptStyle.Inline);
@@ -229,6 +235,7 @@ namespace Microsoft.Bot.Builder.Dialogs
     }
 
     /// <summary>   Dialog factory for simple prompts. </summary>
+    /// <remarks>The exception <see cref="TooManyAttemptsException"/> will be thrown if the number of allowed attempts is exceeded.</remarks>
     public class PromptDialog
     {
         /// <summary>   Prompt for a string. </summary>
@@ -261,7 +268,7 @@ namespace Microsoft.Bot.Builder.Dialogs
         /// <param name="context"> The dialog context.</param>
         /// <param name="resume"> Resume handler.</param>
         /// <param name="promptOptions"> The options for the prompt, <see cref="PromptOptions{T}"/>.</param>
-        internal static void Confirm(IDialogContext context, ResumeAfter<bool> resume, PromptOptions<string> promptOptions)
+        public static void Confirm(IDialogContext context, ResumeAfter<bool> resume, PromptOptions<string> promptOptions)
         {
             var child = new PromptConfirm(promptOptions);
             context.Call<bool>(child, resume);
@@ -318,6 +325,21 @@ namespace Microsoft.Bot.Builder.Dialogs
             context.Call<T>(child, resume);
         }
 
+        /// <summary>
+        /// Prompt for an attachment
+        /// </summary>
+        /// <param name="context"> The dialog context. </param>
+        /// <param name="resume"> Resume handler. </param>
+        /// <param name="prompt"> The prompt to show to the user. </param>
+        /// <param name="contentTypes">The optional content types the attachment type should be part of</param>
+        /// <param name="retry"> What to show on retry</param>
+        /// <param name="attempts"> The number of times to retry</param>
+        public static void Attachment(IDialogContext context, ResumeAfter<IEnumerable<Attachment>> resume, string prompt, IEnumerable<string> contentTypes = null, string retry = null, int attempts = 3)
+        {
+            var child = new PromptAttachment(prompt, retry, attempts, contentTypes);
+            context.Call<IEnumerable<Attachment>>(child, resume);
+        }
+
         /// <summary>   Prompt for a text string. </summary>
         /// <remarks>   Normally used through <see cref="PromptDialog.Text(IDialogContext, ResumeAfter{string}, string, string, int)"/>.</remarks>
         [Serializable]
@@ -333,7 +355,7 @@ namespace Microsoft.Bot.Builder.Dialogs
                 this.promptOptions.DefaultRetry = this.DefaultRetry;
             }
 
-            protected override bool TryParse(Message message, out string result)
+            protected override bool TryParse(IMessageActivity message, out string result)
             {
                 if (!string.IsNullOrWhiteSpace(message.Text))
                 {
@@ -387,7 +409,7 @@ namespace Microsoft.Bot.Builder.Dialogs
             }
 
 
-            protected override bool TryParse(Message message, out bool result)
+            protected override bool TryParse(IMessageActivity message, out bool result)
             {
                 var found = false;
                 result = false;
@@ -431,7 +453,7 @@ namespace Microsoft.Bot.Builder.Dialogs
             {
             }
 
-            protected override bool TryParse(Message message, out Int64 result)
+            protected override bool TryParse(IMessageActivity message, out Int64 result)
             {
                 return Int64.TryParse(message.Text, out result);
             }
@@ -451,7 +473,7 @@ namespace Microsoft.Bot.Builder.Dialogs
             {
             }
             
-            protected override bool TryParse(Message message, out double result)
+            protected override bool TryParse(IMessageActivity message, out double result)
             {
                 return double.TryParse(message.Text, out result);
             }
@@ -494,7 +516,7 @@ namespace Microsoft.Bot.Builder.Dialogs
                     : null;
             }
 
-            protected override bool TryParse(Message message, out T result)
+            protected override bool TryParse(IMessageActivity message, out T result)
             {
                 if (!string.IsNullOrWhiteSpace(message.Text))
                 {
@@ -515,6 +537,45 @@ namespace Microsoft.Bot.Builder.Dialogs
             }
         }
 
+        /// <summary> Prompt for an attachment</summary>
+        /// <remarks> Normally used through <see cref="PromptDialog.Attachment(IDialogContext, ResumeAfter{IEnumerable{Connector.Attachment}}, string, IEnumerable{string}, string, int)"/>.</remarks>
+        [Serializable]
+        public sealed class PromptAttachment : Prompt<IEnumerable<Attachment>, Attachment>
+        {
+            public IEnumerable<string> ContentTypes
+            {
+                get;
+                private set;
+            }
+
+            /// <summary>   Constructor for a prompt attachment dialog. </summary> 
+            /// <param name="prompt">   The prompt. </param> 
+            /// <param name="retry">    What to display on retry. </param> 
+            /// <param name="attempts"> The optional content types the attachment type should be part of.</param>
+            /// <param name="contentTypes"> The content types that is used to filter the attachments. Null implies any content type.</param>
+            public PromptAttachment(string prompt, string retry, int attempts, IEnumerable<string> contentTypes = null)
+                : base(new PromptOptions<Attachment>(prompt, retry, attempts: attempts))
+            {
+                this.ContentTypes = contentTypes ?? new List<string>();
+            }
+
+            protected override bool TryParse(IMessageActivity message, out IEnumerable<Attachment> result)
+            {
+                if (message.Attachments != null && message.Attachments.Any())
+                {
+                    // Retrieve attachments corresponding to content types if any
+                    result = ContentTypes.Any() ? message.Attachments.Join(ContentTypes, a => a.ContentType, c => c, (a, c) => a)
+                                                         : message.Attachments;
+                    return result != null && result.Any();
+                }
+                else
+                {
+                    result = null;
+                    return false;
+                }
+            }
+        }
+
     }
 
     public static partial class Extensions
@@ -527,29 +588,30 @@ namespace Microsoft.Bot.Builder.Dialogs
         /// </remarks>
         /// <typeparam name="T"> Type of the options.</typeparam>
         /// <param name="message"> The message that the buttons will be added to.</param>
+        /// <param name="text"> The text in the <see cref="HeroCard"/>.</param>
         /// <param name="options"> The options that cause generation of buttons.</param>
-        public static void AddButtons<T>(this Message message, IEnumerable<T> options)
+        public static void AddHeroCard<T>(this IMessageActivity message, string text, IEnumerable<T> options)
         {
-            message.Attachments = options.GenerateButtons();
+            message.AttachmentLayout = AttachmentLayoutTypes.List;
+            message.Attachments = options.GenerateHeroCard(text);
         }
 
-        internal static IList<Attachment> GenerateButtons<T>(this IEnumerable<T> options)
+        internal static IList<Attachment> GenerateHeroCard<T>(this IEnumerable<T> options, string text)
         {
-            var actions = new List<Connector.Action>();
+            var actions = new List<CardAction>();
             foreach (var option in options)
             {
-                actions.Add(new Connector.Action
+                actions.Add(new CardAction
                 {
-                    Title = option.ToString()
+                    Title = option.ToString(),
+                    Type = ActionTypes.ImBack, 
+                    Value = option.ToString()
                 });
             }
 
             var attachments = new List<Attachment>
             {
-                new Attachment
-                {
-                    Actions  = actions
-                }
+                new HeroCard(text: text, buttons: actions).ToAttachment()
             };
 
             return attachments; 
@@ -577,7 +639,7 @@ namespace Microsoft.Bot.Builder.Dialogs.Internals
             context.Wait(MessageReceived);
         }
 
-        private async Task MessageReceived(IDialogContext context, IAwaitable<Message> message)
+        private async Task MessageReceived(IDialogContext context, IAwaitable<IMessageActivity> message)
         {
             T result;
             if (this.TryParse(await message, out result))
@@ -596,14 +658,14 @@ namespace Microsoft.Bot.Builder.Dialogs.Internals
                 {
                     //too many attempts, throw.
                     await context.PostAsync(this.MakePrompt(context, promptOptions.TooManyAttempts));
-                    throw new Exception(promptOptions.TooManyAttempts);
+                    throw new TooManyAttemptsException(promptOptions.TooManyAttempts);
                 }
             }
         }
 
-        protected abstract bool TryParse(Message message, out T result);
+        protected abstract bool TryParse(IMessageActivity message, out T result);
 
-        protected virtual Message MakePrompt(IDialogContext context, string prompt, IList<U> options = null)
+        protected virtual IMessageActivity MakePrompt(IDialogContext context, string prompt, IList<U> options = null)
         {
             var msg = context.MakeMessage();
             if (options != null && options.Count > 0)

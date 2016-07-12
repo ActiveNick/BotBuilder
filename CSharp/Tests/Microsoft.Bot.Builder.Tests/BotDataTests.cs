@@ -35,10 +35,12 @@ using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Builder.Dialogs.Internals;
 using Microsoft.Bot.Connector;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace Microsoft.Bot.Builder.Tests
@@ -81,23 +83,25 @@ namespace Microsoft.Bot.Builder.Tests
         }
 
         [TestMethod]
-        public void BotDataBag_SetGet()
+        public async Task BotDataBag_SetGet()
         {
             var data = MakeBotData();
-            var bag = data.PerUserInConversationData;
+            await data.LoadAsync(default(CancellationToken)); 
+            var bag = data.PrivateConversationData;
             Assert.AreEqual(0, bag.Count);
 
-            SetGet(data, d => d.PerUserInConversationData, "blob", Encoding.UTF8.GetBytes("PerUserInConversationData"));
+            SetGet(data, d => d.PrivateConversationData, "blob", Encoding.UTF8.GetBytes("PrivateConversationData"));
             SetGet(data, d => d.ConversationData, "blob", Encoding.UTF8.GetBytes("ConversationData"));
             SetGet(data, d => d.UserData, "blob", Encoding.UTF8.GetBytes("UserData"));
         }
 
         [TestMethod]
-        public void BotDataBag_Stream()
+        public async Task BotDataBag_Stream()
         {
             var data = MakeBotData();
-            var bag = data.PerUserInConversationData;
-            var key = "PerUserInConversationData";
+            await data.LoadAsync(default(CancellationToken)); 
+            var bag = data.PrivateConversationData;
+            var key = "PrivateConversationData";
 
             Assert.AreEqual(0, bag.Count);
 
@@ -135,7 +139,8 @@ namespace Microsoft.Bot.Builder.Tests
     {
         protected override IBotData MakeBotData()
         {
-            return new JObjectBotData(new Message());
+            var msg = DialogTestBase.MakeTestMessage();
+            return new JObjectBotData(new BotIdResolver(msg.Recipient.Id), msg, new CachingBotDataStore_LastWriteWins(new InMemoryDataStore()));
         }
     }
 
@@ -144,7 +149,8 @@ namespace Microsoft.Bot.Builder.Tests
     {
         protected override IBotData MakeBotData()
         {
-            return new DictionaryBotData(new Message());
+            var msg = DialogTestBase.MakeTestMessage();
+            return new DictionaryBotData(new BotIdResolver(msg.Recipient.Id), msg, new CachingBotDataStore_LastWriteWins(new InMemoryDataStore()));
         }
     }
 }

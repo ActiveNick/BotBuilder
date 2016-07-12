@@ -1130,6 +1130,13 @@ dl {
     text-align: center;
 }
 
+.image img {
+    max-width: 70%;
+    display: block;
+    margin: 20px auto 30px auto;
+    border: 1px solid lightgrey;
+}
+
 .dotgraph {
     text-align: center;
 }
@@ -1494,6 +1501,22 @@ tr.heading h2 {
     width: auto;
 }
 
+#nav-tree .selected {
+    background-image: none;
+    color: inherit;
+    text-shadow: none;
+}
+
+#nav-tree .selected a {
+    color: #1E425C;
+    text-decoration: underline;
+}
+
+#nav-tree a:hover {
+    color: #307AB3;
+    text-decoration: underline;
+}
+
 .ui-resizable-e {
     background: none;
 }
@@ -1558,4 +1581,15 @@ div#doc-content h1, h2, h3 {
     right: 10px;
     top: 0px;
     background: none;
+}
+
+    #doc-content {
+        height: auto !important;
+    }
+    #nav-tree {
+        height: auto !important;
+    }
+    
+#q {
+    padding: 3px 25px 3px 10px !important;
 }

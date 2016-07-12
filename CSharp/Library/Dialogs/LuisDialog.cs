@@ -96,12 +96,28 @@ namespace Microsoft.Bot.Builder.Dialogs
     }
 
     /// <summary>
+    /// Matches a LuisResult object with the best scored IntentRecommendation of the LuisResult.
+    /// </summary>
+    public class LuisServiceResult
+    {
+        public LuisServiceResult(LuisResult result, IntentRecommendation intent)
+        {
+            this.Result = result;
+            this.BestIntent = intent;
+        }
+
+        public LuisResult Result { get; }
+
+        public IntentRecommendation BestIntent { get; }
+    }
+
+    /// <summary>
     /// A dialog specialized to handle intents and entities from LUIS.
     /// </summary>
     [Serializable]
     public class LuisDialog<R> : IDialog<R>
     {
-        private readonly ILuisService service;
+        private readonly IReadOnlyList<ILuisService> services;
 
         /// <summary>   Mapping from intent string to the appropriate handler. </summary>
         [NonSerialized]
@@ -110,22 +126,13 @@ namespace Microsoft.Bot.Builder.Dialogs
         /// <summary>
         /// Construct the LUIS dialog.
         /// </summary>
-        /// <param name="service">The LUIS service.</param>
-        public LuisDialog(ILuisService service = null)
+        /// <param name="services">The LUIS service.</param>
+        public LuisDialog(params ILuisService[] services)
         {
-            if (service == null)
-            {
-                var type = this.GetType();
-                var luisModel = type.GetCustomAttribute<LuisModelAttribute>(inherit: true);
-                if (luisModel == null)
-                {
-                    throw new Exception("Luis model attribute is not set for the class");
-                }
-
-                service = new LuisService(luisModel);
-            }
-
-            SetField.NotNull(out this.service, nameof(service), service);
+            var type = this.GetType();
+            var luisModels = type.GetCustomAttributes<LuisModelAttribute>(inherit: true);
+            services = services.Concat(luisModels.Select(m => new LuisService(m))).ToArray();
+            SetField.NotNull(out this.services, nameof(services), services);
         }
 
         public virtual async Task StartAsync(IDialogContext context)
@@ -133,12 +140,32 @@ namespace Microsoft.Bot.Builder.Dialogs
             context.Wait(MessageReceived);
         }
 
+        /// <summary>
+        /// Calculates the best scored <see cref="IntentRecommendation" /> from a <see cref="LuisResult" />.
+        /// </summary>
+        /// <param name="result">A result of a LUIS service call.</param>
+        /// <returns>The best scored <see cref="IntentRecommendation" />, or null if <paramref name="result" /> doesn't contain any intents.</returns>
         protected virtual IntentRecommendation BestIntentFrom(LuisResult result)
         {
-            return result.Intents.MaxBy(i => i.Score ?? 0);
+            return result.Intents.MaxBy(i => i.Score ?? 0d);
         }
 
-        protected virtual async Task MessageReceived(IDialogContext context, IAwaitable<Message> item)
+        /// <summary>
+        /// Calculates the best scored <see cref="IntentRecommendation" /> across some <see cref="LuisResult" /> objects.
+        /// </summary>
+        /// <param name="results">Results of multiple LUIS services calls.</param>
+        /// <returns>A <see cref="LuisServiceResult" /> with the best scored <see cref="IntentRecommendation" /> and related <see cref="LuisResult" />,
+        /// or null if no one of <paramref name="results" /> contains any intents.</returns>
+        protected virtual LuisServiceResult BestResultFrom(IEnumerable<LuisResult> results)
+        {
+            var winners = from result in results
+                          let resultWinner = BestIntentFrom(result)
+                          where resultWinner != null
+                          select new LuisServiceResult(result, resultWinner);
+            return winners.MaxBy(i => i.BestIntent.Score ?? 0d);
+        }
+
+        protected virtual async Task MessageReceived(IDialogContext context, IAwaitable<IMessageActivity> item)
         {
             if (this.handlerByIntent == null)
             {
@@ -147,19 +174,18 @@ namespace Microsoft.Bot.Builder.Dialogs
 
             var message = await item;
             var messageText = await GetLuisQueryTextAsync(context, message);
-            var luisRes = await this.service.QueryAsync(messageText);
-
-            var intent = BestIntentFrom(luisRes);
+            var tasks = this.services.Select(s => s.QueryAsync(messageText)).ToArray();
+            var winner = this.BestResultFrom(await Task.WhenAll(tasks));
 
             IntentHandler handler = null;
-            if (intent == null || !this.handlerByIntent.TryGetValue(intent.Intent, out handler))
+            if (winner == null || !this.handlerByIntent.TryGetValue(winner.BestIntent.Intent, out handler))
             {
                 handler = this.handlerByIntent[string.Empty];
             }
 
             if (handler != null)
             {
-                await handler(context, luisRes);
+                await handler(context, winner?.Result);
             }
             else
             {
@@ -168,7 +194,7 @@ namespace Microsoft.Bot.Builder.Dialogs
             }
         }
 
-        protected virtual Task<string> GetLuisQueryTextAsync(IDialogContext context, Message message)
+        protected virtual Task<string> GetLuisQueryTextAsync(IDialogContext context, IMessageActivity message)
         {
             return Task.FromResult(message.Text);
         }

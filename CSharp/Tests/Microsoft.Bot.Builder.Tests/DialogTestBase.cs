@@ -34,6 +34,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 
 using Microsoft.Bot.Builder.Dialogs;
 using Microsoft.Bot.Builder.Dialogs.Internals;
@@ -48,16 +50,28 @@ namespace Microsoft.Bot.Builder.Tests
 {
     public abstract class DialogTestBase
     {
-        protected static MockConnectorFactory mockConnectorFactory = new MockConnectorFactory(); 
+        protected static MockConnectorFactory mockConnectorFactory = new MockConnectorFactory(new BotIdResolver("testBot")); 
 
         [Flags]
-        public enum Options { None, Reflection, ScopedQueue, MockConnectorFactory };
+        public enum Options { None, Reflection, ScopedQueue, MockConnectorFactory, ResolveDialogFromContainer };
 
         public static IContainer Build(Options options, params object[] singletons)
         {
             var builder = new ContainerBuilder();
-            builder.RegisterModule(new DialogModule_MakeRoot());
+            if (options.HasFlag(Options.ResolveDialogFromContainer))
+            {
+                builder.RegisterModule(new DialogModule());
+            }
+            else
+            {
+                builder.RegisterModule(new DialogModule_MakeRoot());
+            }
 
+            builder
+                .Register(c => new BotIdResolver("testBot"))
+                .As<IBotIdResolver>()
+                .SingleInstance();
+            
             builder
            .Register((c, p) => mockConnectorFactory)
                .As<IConnectorClientFactory>()
@@ -70,7 +84,7 @@ namespace Microsoft.Bot.Builder.Tests
 
             var r =
                 builder
-                .Register<Queue<Message>>(c => new Queue<Message>())
+                .Register<Queue<IMessageActivity>>(c => new Queue<IMessageActivity>())
                 .AsSelf();
 
             if (options.HasFlag(Options.ScopedQueue))
@@ -98,16 +112,57 @@ namespace Microsoft.Bot.Builder.Tests
             return builder.Build();
         }
 
-        protected static Message MakeTestMessage()
+        public static class ChannelID
         {
-            return new Message() {
-                From = new ChannelAccount { Id = "testUser" },
-                ConversationId = Guid.NewGuid().ToString(),
-                To = new ChannelAccount { Id = "testBot", IsBot = true}
+            public const string User = "testUser";
+            public const string Bot = "testBot";
+        }
+
+        public static IMessageActivity MakeTestMessage()
+        {
+            return new Activity() {
+                From = new ChannelAccount { Id = ChannelID.User },
+                Conversation = new ConversationAccount { Id = Guid.NewGuid().ToString() },
+                Recipient = new ChannelAccount { Id = ChannelID.Bot },
+                ServiceUrl = "InvalidServiceUrl", 
+                ChannelId = "Test"
             };
         }
 
-        public static void AssertMentions(string expectedText, IEnumerable<Message> actualToUser)
+        public static async Task AssertScriptAsync(ILifetimeScope container, params string[] pairs)
+        {
+            Assert.AreNotEqual(0, pairs.Length);
+
+            var toBot = MakeTestMessage();
+
+            for (int index = 0; index < pairs.Length; ++index)
+            {
+                var toBotText = pairs[index];
+
+                using (var scope = DialogModule.BeginLifetimeScope(container, toBot))
+                {
+                    var task = scope.Resolve<IPostToBot>();
+                    toBot.Text = toBotText;
+                    await task.PostAsync(toBot, CancellationToken.None);
+                }
+
+                var queue = container.Resolve<Queue<IMessageActivity>>();
+
+                while (queue.Count > 0)
+                {
+                    ++index;
+
+                    var toUser = queue.Dequeue();
+
+                    var actual = toUser.Text;
+                    var expected = pairs[index];
+
+                    Assert.AreEqual(expected, actual);
+                }
+            }
+        }
+
+        public static void AssertMentions(string expectedText, IEnumerable<IMessageActivity> actualToUser)
         {
             Assert.AreEqual(1, actualToUser.Count());
             var index = actualToUser.Single().Text.IndexOf(expectedText, StringComparison.OrdinalIgnoreCase);
@@ -116,13 +171,13 @@ namespace Microsoft.Bot.Builder.Tests
 
         public static void AssertMentions(string expectedText, ILifetimeScope scope)
         {
-            var queue = scope.Resolve<Queue<Message>>();
+            var queue = scope.Resolve<Queue<IMessageActivity>>();
             AssertMentions(expectedText, queue);
         }
 
         public static void AssertNoMessages(ILifetimeScope scope)
         {
-            var queue = scope.Resolve<Queue<Message>>();
+            var queue = scope.Resolve<Queue<IMessageActivity>>();
             Assert.AreEqual(0, queue.Count);
         }
 

@@ -23,7 +23,7 @@ namespace Microsoft.Bot.Builder.Dialogs
     /// \section install Install
     /// 
     /// In order to use the %Microsoft %Bot %Builder you should first follow the install steps in the 
-    /// [Getting Started with Bot Connector] page to setup your bot.  
+    /// \ref gettingstarted page to setup your bot.  
     /// In order to use the framework you need to:
     /// 1. Right-click on your project and select "Manage NuGet Packages".  
     /// 2. In the "Browse" tab, type "Microsoft.Bot.Builder".  
@@ -51,10 +51,12 @@ namespace Microsoft.Bot.Builder.Dialogs
     /// 
     /// If you have problems or suggestions, please visit our [support page](/support/).
     /// 
-    /// \tableofcontents
     ///
     ///
 }
+
+/// <summary>Root namespace for the %Microsoft %Bot %Connector %SDK.</summary>
+namespace Microsoft.Bot.Connector { }
 
 /// <summary>Root namespace for the %Microsoft %Bot %Builder %SDK.</summary>
 namespace Microsoft.Bot.Builder { }
@@ -71,6 +73,16 @@ namespace Microsoft.Bot.Builder.Dialogs.Internals { }
 /// If you want to use \ref FormFlow you should use include both the Microsoft.Bot.Builder.Dialogs namespace and this one.
 /// </remarks>
 namespace Microsoft.Bot.Builder.FormFlow { }
+
+/// <summary>
+/// Namespace for \ref FormFlow declaratively defined with JSON Schema.
+/// </summary>
+namespace Microsoft.Bot.Builder.FormFlow.Json { }
+
+/// <summary>
+/// Root namespace for the %Microsoft %Bot %Builder %Calling %SDK.
+/// </summary>
+namespace Microsoft.Bot.Builder.Calling { }
 
 /// <summary>Namespace for \ref FormFlow advanced building blocks.</summary>
 /// <remarks>

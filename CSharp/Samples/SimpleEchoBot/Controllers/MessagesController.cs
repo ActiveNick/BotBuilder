@@ -4,6 +4,9 @@ using System.Web.Http;
 
 using Microsoft.Bot.Connector;
 using Microsoft.Bot.Builder.Dialogs;
+using System.Web.Http.Description;
+using System.Net.Http;
+using System.Diagnostics;
 
 namespace Microsoft.Bot.Sample.SimpleEchoBot
 {
@@ -15,7 +18,7 @@ namespace Microsoft.Bot.Sample.SimpleEchoBot
             context.Wait(MessageReceivedAsync);
         }
 
-        public async Task MessageReceivedAsync(IDialogContext context, IAwaitable<Message> argument)
+        public async Task MessageReceivedAsync(IDialogContext context, IAwaitable<IMessageActivity> argument)
         {
             var message = await argument;
             await context.PostAsync("You said: " + message.Text);
@@ -28,47 +31,47 @@ namespace Microsoft.Bot.Sample.SimpleEchoBot
     {
         /// <summary>
         /// POST: api/Messages
-        /// receive a message from a user and reply to it
+        /// receive a message from a user and send replies
         /// </summary>
-        public async Task<Message> Post([FromBody]Message message)
+        /// <param name="activity"></param>
+        [ResponseType(typeof(void))]
+        public virtual async Task<HttpResponseMessage> Post([FromBody] Activity activity)
         {
-            if (message.Type == "Message")
+            // check if activity is of type message
+            if (activity != null && activity.GetActivityType() == ActivityTypes.Message)
             {
-                // return our reply to the user
-                return await Conversation.SendAsync(message, () => new EchoDialog());
+                await Conversation.SendAsync(activity, () => new EchoDialog());
             }
             else
             {
-                return HandleSystemMessage(message);
+                HandleSystemMessage(activity);
             }
+            return new HttpResponseMessage(System.Net.HttpStatusCode.Accepted);
         }
 
-        private Message HandleSystemMessage(Message message)
+        private Activity HandleSystemMessage(Activity message)
         {
-            if (message.Type == "Ping")
+            if (message.Type == ActivityTypes.DeleteUserData)
             {
-                Message reply = message.CreateReplyMessage();
-                reply.Type = "Ping";
-                return reply;
-            }
-            else if (message.Type == "DeleteUserData")
-            {
-                // Implement user deletion
+                // Implement user deletion here
                 // If we handle user deletion, return a real message
             }
-            else if (message.Type == "BotAddedToConversation")
+            else if (message.Type == ActivityTypes.ConversationUpdate)
             {
+                // Handle conversation state changes, like members being added and removed
+                // Use Activity.MembersAdded and Activity.MembersRemoved and Activity.Action for info
+                // Not available in all channels
             }
-            else if (message.Type == "BotRemovedFromConversation")
+            else if (message.Type == ActivityTypes.ContactRelationUpdate)
             {
+                // Handle add/remove from contact lists
+                // Activity.From + Activity.Action represent what happened
             }
-            else if (message.Type == "UserAddedToConversation")
+            else if (message.Type == ActivityTypes.Typing)
             {
+                // Handle knowing tha the user is typing
             }
-            else if (message.Type == "UserRemovedFromConversation")
-            {
-            }
-            else if (message.Type == "EndOfConversation")
+            else if (message.Type == ActivityTypes.Ping)
             {
             }
 
