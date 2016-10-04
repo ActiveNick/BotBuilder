@@ -37,6 +37,8 @@ import ses = require('./Session');
 import consts = require('./consts');
 import prompts = require('./dialogs/Prompts');
 
+const debugLoggingEnabled = new RegExp('\\bbotbuilder\\b', 'i').test(process.env.NODE_DEBUG || '');
+
 export function error(fmt: string, ...args: any[]): void {
     var msg = args.length > 0 ? sprintf.vsprintf(fmt, args) : fmt;
     console.error('ERROR: ' + msg);
@@ -50,14 +52,34 @@ export function warn(addressable: ses.Session|IMessage|IAddress, fmt: string, ..
 
 export function info(addressable: ses.Session|IMessage|IAddress, fmt: string, ...args: any[]): void {
     var channelId = Channel.getChannelId(addressable);
-    switch (channelId) {
-        case Channel.channels.emulator:
-            var prefix = getPrefix(<ses.Session>addressable);
-            var msg = args.length > 0 ? sprintf.vsprintf(fmt, args) : fmt;
-            console.info(prefix + msg);
-            break;
-    }    
+    if (channelId === Channel.channels.emulator || debugLoggingEnabled){
+        var prefix = getPrefix(<ses.Session>addressable);
+        var msg = args.length > 0 ? sprintf.vsprintf(fmt, args) : fmt;
+        console.info(prefix + msg);
+    }
 }
+
+export function debug(fmt: string, ...args: any[]): void {
+    debugLog(false, fmt, args);
+}
+
+export function trace(fmt: string, ...args: any[]): void {
+    debugLog(true, fmt, args);    
+}
+
+function debugLog(trace:boolean, fmt: string, args: any[]): void {
+    if (!debugLoggingEnabled) {
+        return;
+    }
+
+    var msg = args.length > 0 ? sprintf.vsprintf(fmt, args) : fmt;
+    if (trace) {
+        console.trace(msg);    
+    } else {
+        console.log(msg);            
+    }        
+}
+
 
 function getPrefix(addressable: ses.Session): string {
     var prefix = '';

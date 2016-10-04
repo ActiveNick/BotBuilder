@@ -49,59 +49,32 @@ namespace Microsoft.Bot.Builder.Dialogs
     /// The resumption cookie that can be used to resume a conversation with a user. 
     /// </summary>
     [Serializable]
-    public class ResumptionCookie
+    public sealed class ResumptionCookie : IEquatable<ResumptionCookie>
     {
-        /// <summary>
-        /// The user Id.
-        /// </summary>
-        [JsonProperty(PropertyName = "userId")]
-        public string UserId { set; get; }
+        public Address Address { get; set; }
 
         /// <summary>
         /// The user name.
         /// </summary>
-        [JsonProperty(PropertyName = "userName")]
         public string UserName { set; get; }
 
         /// <summary>
-        /// The channelId.
+        /// True if the <see cref="Address.ServiceUrl"/> is trusted; False otherwise.
         /// </summary>
-        [JsonProperty(PropertyName = "channelId")]
-        public string ChannelId { set; get; }
-
-        /// <summary>
-        /// The bot Id. 
-        /// </summary>
-        [JsonProperty(PropertyName = "botId")]
-        public string BotId { set; get; }
-
-        /// <summary>
-        /// The service url.
-        /// </summary>
-        [JsonProperty(PropertyName = "serviceUrl")]
-        public string ServiceUrl { set; get; }
+        /// <remarks> <see cref="Conversation.ResumeAsync{T}(ResumptionCookie, T, System.Threading.CancellationToken)"/> adds 
+        /// the host of the <see cref="Address.ServiceUrl"/> to <see cref="MicrosoftAppCredentials.TrustedHostNames"/> if this flag is True.
+        /// </remarks>
+        public bool IsTrustedServiceUrl { private set; get; }
 
         /// <summary>
         /// The IsGroup flag for conversation.
         /// </summary>
-        [JsonProperty(PropertyName = "isGroup")]
         public bool IsGroup { set; get; }
-
-        /// <summary>
-        /// The Id of the conversation that will be resumed.
-        /// </summary>
-        [JsonProperty(PropertyName = "conversationId")]
-        public string ConversationId { set; get; }
 
         /// <summary>
         /// The locale of message.
         /// </summary>
-        [JsonProperty(PropertyName = "locale")]
         public string Locale { set; get; }
-
-        public ResumptionCookie()
-        {
-        }
 
         /// <summary>
         /// Creates an instance of the resumption cookie. 
@@ -113,19 +86,30 @@ namespace Microsoft.Bot.Builder.Dialogs
         /// <param name="serviceUrl"> The service url of the conversation.</param>
         /// <param name="locale"> The locale of the message.</param>
         public ResumptionCookie(string userId, string botId, string conversationId, string channelId, string serviceUrl, string locale = "en")
+            : this(new Address(
+                                  // purposefully using named arguments because these all have the same type
+                                  botId: botId,
+                                  channelId: channelId,
+                                  userId: userId,
+                                  conversationId: conversationId,
+                                  serviceUrl: serviceUrl
+                               )
+                  )
         {
-            SetField.CheckNull(nameof(userId), userId);
-            SetField.CheckNull(nameof(botId), botId);
-            SetField.CheckNull(nameof(conversationId), conversationId);
-            SetField.CheckNull(nameof(channelId), channelId);
-            SetField.CheckNull(nameof(serviceUrl), serviceUrl);
             SetField.CheckNull(nameof(locale), locale);
-            this.UserId = userId;
-            this.BotId = botId;
-            this.ConversationId = conversationId;
-            this.ChannelId = channelId;
-            this.ServiceUrl = serviceUrl;
             this.Locale = locale;
+        }
+
+        /// <summary>
+        /// Creates an instance of resumption cookie form a <see cref="Dialogs.Address"/> 
+        /// </summary>
+        /// <param name="address"> The address.</param>
+        /// <remarks>Allows <see cref="JsonSerializer"/> to deserialize an instance of resumption cookie.</remarks>
+        [JsonConstructor]
+        public ResumptionCookie(Address address)
+        {
+            this.Address = address;
+            IsTrustedServiceUrl = MicrosoftAppCredentials.IsTrustedServiceUrl(address.ServiceUrl);
         }
 
         /// <summary>
@@ -134,15 +118,32 @@ namespace Microsoft.Bot.Builder.Dialogs
         /// <param name="msg"> The message.</param>
         public ResumptionCookie(IMessageActivity msg)
         {
-            UserId = msg.From?.Id;
+            this.Address = new Address(msg);
             UserName = msg.From?.Name;
-            ChannelId = msg.ChannelId;
-            ServiceUrl = msg.ServiceUrl;
-            BotId = msg.Recipient?.Id;
-            ConversationId = msg.Conversation?.Id;
-            var isGroup =  msg.Conversation?.IsGroup;
+            IsTrustedServiceUrl = MicrosoftAppCredentials.IsTrustedServiceUrl(msg.ServiceUrl);
+            var isGroup = msg.Conversation?.IsGroup;
             IsGroup = isGroup.HasValue && isGroup.Value;
             Locale = msg.Locale;
+        }
+
+        public bool Equals(ResumptionCookie other)
+        {
+            return other != null
+                && object.Equals(this.Address, other.Address)
+                && object.Equals(this.UserName, other.UserName)
+                && this.IsTrustedServiceUrl == other.IsTrustedServiceUrl
+                && this.IsGroup == other.IsGroup
+                && object.Equals(this.Locale, other.Locale);
+        }
+
+        public override bool Equals(object other)
+        {
+            return this.Equals(other as ResumptionCookie);
+        }
+
+        public override int GetHashCode()
+        {
+            return this.Address.GetHashCode();
         }
 
         /// <summary>
@@ -156,18 +157,18 @@ namespace Microsoft.Bot.Builder.Dialogs
                 Id = Guid.NewGuid().ToString(),
                 Recipient = new ChannelAccount
                 {
-                    Id = this.BotId
+                    Id = this.Address.BotId
                 },
-                ChannelId = this.ChannelId, 
-                ServiceUrl = this.ServiceUrl,
+                ChannelId = this.Address.ChannelId,
+                ServiceUrl = this.Address.ServiceUrl,
                 Conversation = new ConversationAccount
                 {
-                    Id = this.ConversationId, 
+                    Id = this.Address.ConversationId,
                     IsGroup = this.IsGroup
                 },
                 From = new ChannelAccount
                 {
-                    Id = this.UserId,
+                    Id = this.Address.UserId,
                     Name = this.UserName
                 },
                 Locale = this.Locale

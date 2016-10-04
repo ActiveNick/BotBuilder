@@ -34,19 +34,21 @@
 import dlg = require('../dialogs/Dialog');
 import dl = require('./Library');
 import da = require('../dialogs/DialogAction');
+import actions = require('../dialogs/ActionSet');
 import sd = require('../dialogs/SimpleDialog');
 import ses = require('../Session');
 import bs = require('../storage/BotStorage');
 import consts = require('../consts');
 import utils = require('../utils');
 import logger = require('../logger');
-import events = require('events');
 import async = require('async');
+import events = require('events');
 
 export interface IUniversalBotSettings {
     defaultDialogId?: string;
     defaultDialogArgs?: any;
     localizer?: ILocalizer;
+    localizerSettings?: ILocalizerSettings;    
     lookupUser?: ILookupUser;
     processLimit?: number;
     autoBatchDelay?: number;
@@ -87,9 +89,11 @@ export class UniversalBot extends events.EventEmitter {
     };
     private connectors = <IConnectorMap>{}; 
     private lib = new dl.Library(consts.Library.default);
+    private actions = new actions.ActionSet();
     private mwReceive = <IEventMiddleware[]>[];
     private mwSend = <IEventMiddleware[]>[];
     private mwSession = <ses.ISessionMiddleware[]>[]; 
+    
     
     constructor(connector?: IConnector, settings?: IUniversalBotSettings) {
         super();
@@ -101,6 +105,7 @@ export class UniversalBot extends events.EventEmitter {
                 }
             }
         }
+
         if (connector) {
             this.connector(consts.defaultConnector, connector);
             var asStorage: bs.IBotStorage = <any>connector;
@@ -146,7 +151,7 @@ export class UniversalBot extends events.EventEmitter {
     // Library Management
     //-------------------------------------------------------------------------
 
-    public dialog(id: string, dialog?: dlg.IDialog | da.IDialogWaterfallStep[] | da.IDialogWaterfallStep): dlg.Dialog {
+    public dialog(id: string, dialog?: dlg.Dialog | da.IDialogWaterfallStep[] | da.IDialogWaterfallStep): dlg.Dialog {
         return this.lib.dialog(id, dialog);
     }
 
@@ -179,6 +184,21 @@ export class UniversalBot extends events.EventEmitter {
         });
         return this;    
     }
+
+    //-------------------------------------------------------------------------
+    // Actions
+    //-------------------------------------------------------------------------
+
+    public beginDialogAction(name: string, id: string, options?: actions.IDialogActionOptions): this {
+        this.actions.beginDialogAction(name, id, options);
+        return this;
+    }
+
+    public endConversationAction(name: string, msg?: string|string[]|IMessage|IIsMessage, options?: actions.IDialogActionOptions): this {
+        this.actions.endConversationAction(name, msg, options);
+        return this;
+    }
+
     
     //-------------------------------------------------------------------------
     // Messaging
@@ -228,18 +248,17 @@ export class UniversalBot extends events.EventEmitter {
                 text: '',
                 user: user
             };
-            if (msg.address.conversation) {
-                delete msg.address.conversation;
-            }
             this.ensureConversation(msg.address, (adr) => {
                 msg.address = adr;
+                var conversationId = msg.address.conversation ? msg.address.conversation.id : null;
                 var storageCtx: bs.IBotStorageContext = { 
                     userId: msg.user.id, 
+                    conversationId: conversationId,
                     address: msg.address,
                     persistUserData: this.settings.persistUserData,
                     persistConversationData: this.settings.persistConversationData 
                 };
-                this.route(storageCtx, msg, dialogId, dialogArgs, this.errorLogger(done));
+                this.route(storageCtx, msg, dialogId, dialogArgs, this.errorLogger(done), true);
             }, this.errorLogger(done));
         }, this.errorLogger(done));
     }
@@ -274,7 +293,7 @@ export class UniversalBot extends events.EventEmitter {
                     connector.send(list, this.errorLogger(done));
                 }, this.errorLogger(done));
             } else if (done) {
-                done;
+                done(null);
             }
         }));
     }
@@ -306,7 +325,7 @@ export class UniversalBot extends events.EventEmitter {
     // Helpers
     //-------------------------------------------------------------------------
     
-    private route(storageCtx: bs.IBotStorageContext, message: IMessage, dialogId: string, dialogArgs: any, done: (err: Error) => void): void {
+    private route(storageCtx: bs.IBotStorageContext, message: IMessage, dialogId: string, dialogArgs: any, done: (err: Error) => void, newStack = false): void {
         // --------------------------------------------------------------------
         // Theory of Operation
         // --------------------------------------------------------------------
@@ -343,8 +362,10 @@ export class UniversalBot extends events.EventEmitter {
             // Initialize session
             var session = new ses.Session({
                 localizer: this.settings.localizer,
+                localizerSettings: this.settings.localizerSettings,
                 autoBatchDelay: this.settings.autoBatchDelay,
                 library: this.lib,
+                actions: this.actions,
                 middleware: this.mwSession,
                 dialogId: dialogId,
                 dialogArgs: dialogArgs,
@@ -369,7 +390,7 @@ export class UniversalBot extends events.EventEmitter {
             session.conversationData = data.conversationData || {};
             session.privateConversationData = data.privateConversationData || {};
             if (session.privateConversationData.hasOwnProperty(consts.Data.SessionState)) {
-                sessionState = session.privateConversationData[consts.Data.SessionState];
+                sessionState = newStack ? null : session.privateConversationData[consts.Data.SessionState];
                 delete session.privateConversationData[consts.Data.SessionState];
             }
             loadedData = data;  // We'll clone it when saving data later
@@ -505,7 +526,7 @@ export class UniversalBot extends events.EventEmitter {
         if (this.listenerCount('error') > 0) {
             this.emit('error', e);
         } else {
-            console.log(e.stack);
+            console.error(e.stack);
         }
     }
 }

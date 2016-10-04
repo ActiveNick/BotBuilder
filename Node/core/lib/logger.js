@@ -1,7 +1,9 @@
+"use strict";
 var sprintf = require('sprintf-js');
 var Channel = require('./Channel');
 var consts = require('./consts');
 var prompts = require('./dialogs/Prompts');
+var debugLoggingEnabled = new RegExp('\\bbotbuilder\\b', 'i').test(process.env.NODE_DEBUG || '');
 function error(fmt) {
     var args = [];
     for (var _i = 1; _i < arguments.length; _i++) {
@@ -27,15 +29,41 @@ function info(addressable, fmt) {
         args[_i - 2] = arguments[_i];
     }
     var channelId = Channel.getChannelId(addressable);
-    switch (channelId) {
-        case Channel.channels.emulator:
-            var prefix = getPrefix(addressable);
-            var msg = args.length > 0 ? sprintf.vsprintf(fmt, args) : fmt;
-            console.info(prefix + msg);
-            break;
+    if (channelId === Channel.channels.emulator || debugLoggingEnabled) {
+        var prefix = getPrefix(addressable);
+        var msg = args.length > 0 ? sprintf.vsprintf(fmt, args) : fmt;
+        console.info(prefix + msg);
     }
 }
 exports.info = info;
+function debug(fmt) {
+    var args = [];
+    for (var _i = 1; _i < arguments.length; _i++) {
+        args[_i - 1] = arguments[_i];
+    }
+    debugLog(false, fmt, args);
+}
+exports.debug = debug;
+function trace(fmt) {
+    var args = [];
+    for (var _i = 1; _i < arguments.length; _i++) {
+        args[_i - 1] = arguments[_i];
+    }
+    debugLog(true, fmt, args);
+}
+exports.trace = trace;
+function debugLog(trace, fmt, args) {
+    if (!debugLoggingEnabled) {
+        return;
+    }
+    var msg = args.length > 0 ? sprintf.vsprintf(fmt, args) : fmt;
+    if (trace) {
+        console.trace(msg);
+    }
+    else {
+        console.log(msg);
+    }
+}
 function getPrefix(addressable) {
     var prefix = '';
     if (addressable && addressable.sessionState && addressable.sessionState.callstack) {
