@@ -28,10 +28,10 @@ namespace Microsoft.Bot.Sample.EchoBot
                 switch (activity.GetActivityType())
                 {
                     case ActivityTypes.Message:
-                        //await Conversation.SendAsync(activity, () => new EchoDialog());
+                        await Conversation.SendAsync(activity, () => new EchoDialog());
                         //await Conversation.SendAsync(activity, () => EchoCommandDialog.dialog);
                         //await Conversation.SendAsync(activity, () => new EchoAttachmentDialog());
-                        await Conversation.SendAsync(activity, () => EchoChainDialog.dialog);
+                        //await Conversation.SendAsync(activity, () => EchoChainDialog.dialog);
                         break;
 
                     case ActivityTypes.ConversationUpdate:

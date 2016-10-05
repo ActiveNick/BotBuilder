@@ -28,7 +28,7 @@ namespace Microsoft.Bot.Sample.EchoBot
                     AfterResetAsync,
                     "Are you sure you want to reset the count?",
                     "Didn't get that!",
-                    promptStyle: PromptStyle.None);
+                    promptStyle: PromptStyle.PerLine);
             }
             else
             {
