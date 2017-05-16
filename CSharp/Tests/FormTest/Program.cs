@@ -4,7 +4,7 @@
 // 
 // Microsoft Bot Framework: http://botframework.com
 // 
-// Bot Builder SDK Github:
+// Bot Builder SDK GitHub:
 // https://github.com/Microsoft/BotBuilder
 // 
 // Copyright (c) Microsoft Corporation
@@ -47,6 +47,7 @@ using Microsoft.Bot.Builder.Dialogs.Internals;
 using Microsoft.Bot.Builder.FormFlow;
 using Microsoft.Bot.Builder.FormFlow.Advanced;
 using Microsoft.Bot.Connector;
+using Microsoft.Bot.Builder.History;
 
 using AnnotatedSandwichOrder = Microsoft.Bot.Sample.AnnotatedSandwichBot.SandwichOrder;
 using SimpleSandwichOrder = Microsoft.Bot.Sample.SimpleSandwichBot.SandwichOrder;
@@ -115,13 +116,14 @@ namespace Microsoft.Bot.Builder.FormFlowTest
                 .InstancePerLifetimeScope();
 
             builder
-                .Register(c => new BotIdResolver("testBot"))
-                .As<IBotIdResolver>()
-                .SingleInstance();
-
-            builder
                 .Register(c => new BotToUserTextWriter(new BotToUserQueue(message, new Queue<IMessageActivity>()), Console.Out))
                 .As<IBotToUser>()
+                .InstancePerLifetimeScope();
+
+            // Trace activities to debug output
+            builder
+                .RegisterType<TraceActivityLogger>()
+                .AsImplementedInterfaces()
                 .InstancePerLifetimeScope();
 
             using (var container = builder.Build())
@@ -132,13 +134,14 @@ namespace Microsoft.Bot.Builder.FormFlowTest
 
                 var task = scope.Resolve<IPostToBot>();
                 await scope.Resolve<IBotData>().LoadAsync(default(CancellationToken));
-                var stack = scope.Resolve<IDialogStack>();
+                var stack = scope.Resolve<IDialogTask>();
 
                 stack.Call(MakeRoot(), null);
                 await stack.PollAsync(CancellationToken.None);
 
                 while (true)
                 {
+                    message.Timestamp = DateTime.UtcNow;
                     message.Text = await Console.In.ReadLineAsync();
                     message.Locale = Locale;
                     await task.PostAsync(message, CancellationToken.None);
@@ -258,15 +261,15 @@ namespace Microsoft.Bot.Builder.FormFlowTest
                             return new FormDialog<PizzaOrder>(new PizzaOrder()
                             { Size = SizeOptions.Large, Kind = PizzaOptions.BYOPizza },
                             () => PizzaOrder.BuildForm(),
-                            options: FormOptions.PromptInStart,
+                            options: FormOptions.PromptInStart | FormOptions.PromptFieldsWithValues,
                             entities: new Luis.Models.EntityRecommendation[] {
-                                new Luis.Models.EntityRecommendation("Address", "abc", "DeliveryAddress"),
-                                new Luis.Models.EntityRecommendation("Kind", "byo", "Kind"),
-                                new Luis.Models.EntityRecommendation("Signature", "Hawaiian", "Signature"),
-                                new Luis.Models.EntityRecommendation("Toppings", "onions", "BYO.Toppings"),
-                                new Luis.Models.EntityRecommendation("Toppings", "peppers", "BYO.Toppings"),
-                                new Luis.Models.EntityRecommendation("Toppings", "ice", "BYO.Toppings"),
-                                new Luis.Models.EntityRecommendation("NotFound", "OK", "Notfound")
+                                new Luis.Models.EntityRecommendation("DeliveryAddress", entity:"2"),
+                                new Luis.Models.EntityRecommendation("Signature", entity:"Hawaiian"),
+                                new Luis.Models.EntityRecommendation("BYO.Toppings", entity:"onions"),
+                                new Luis.Models.EntityRecommendation("BYO.Toppings", entity:"peppers"),
+                                new Luis.Models.EntityRecommendation("BYO.Toppings", entity:"ice"),
+                                new Luis.Models.EntityRecommendation("NumberOfPizzas", entity:"5"),
+                                new Luis.Models.EntityRecommendation("NotFound", entity:"OK")
                             }
                             );
                         case DebugOptions.Localized:

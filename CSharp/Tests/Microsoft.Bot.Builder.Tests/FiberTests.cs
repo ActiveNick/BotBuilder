@@ -4,7 +4,7 @@
 // 
 // Microsoft Bot Framework: http://botframework.com
 // 
-// Bot Builder SDK Github:
+// Bot Builder SDK GitHub:
 // https://github.com/Microsoft/BotBuilder
 // 
 // Copyright (c) Microsoft Corporation
@@ -37,6 +37,7 @@ using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Runtime.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 
 using Microsoft.Bot.Builder.Internals.Fibers;
@@ -57,10 +58,11 @@ namespace Microsoft.Bot.Builder.Tests
         }
 
         public static readonly C Context = default(C);
+        public static readonly CancellationToken Token = new CancellationTokenSource().Token;
 
         public interface IMethod
         {
-            Task<IWait<C>> CodeAsync<T>(IFiber<C> fiber, C context, IAwaitable<T> item);
+            Task<IWait<C>> CodeAsync<T>(IFiber<C> fiber, C context, IAwaitable<T> item, CancellationToken token);
         }
 
         public static Moq.Mock<IMethod> MockMethod()
@@ -105,7 +107,7 @@ namespace Microsoft.Bot.Builder.Tests
             IWait wait;
             do
             {
-                wait = await fiber.PollAsync(Context);
+                wait = await fiber.PollAsync(Context, Token);
             }
             while (wait.Need != Need.None && wait.Need != Need.Done);
         }
@@ -161,6 +163,90 @@ namespace Microsoft.Bot.Builder.Tests
     [TestClass]
     public sealed class FiberTests : FiberTestBase
     {
+        public static async Task Wait_is_Awaitable<ItemType, PostType>(PostType expected)
+        {
+            var completion = new Wait<object, ItemType>();
+
+            IWait wait = completion;
+            Assert.AreEqual(Need.None, wait.Need, "at initial state");
+
+            IFiber<object> fiber = new Mock<IFiber<object>>(MockBehavior.Strict).Object;
+            object context = new object();
+
+            IWait<object, ItemType> typed = completion;
+            typed.Wait(async (f, c, item, token) =>
+            {
+                Assert.AreEqual(Need.Call, wait.Need, "inside callback state");
+
+                Assert.AreEqual(fiber, f);
+                Assert.AreEqual(context, c);
+
+                Assert.AreEqual(expected, item.GetAwaiter().GetResult());
+                Assert.AreEqual(expected, await item);
+                return null;
+            });
+            Assert.AreEqual(Need.Wait, wait.Need, "waiting state");
+
+            wait.Post(expected);
+            Assert.AreEqual(Need.Poll, wait.Need, "need to poll state");
+
+            await typed.PollAsync(fiber, context, CancellationToken.None);
+            Assert.AreEqual(Need.Done, wait.Need, "done state");
+
+            IAwaitable<ItemType> awaitable = completion;
+            var actual = await awaitable;
+
+            Assert.AreEqual(expected, actual);
+        }
+
+        [TestMethod]
+        public async Task Wait_is_Awaitable_Guid_Guid()
+        {
+            await Wait_is_Awaitable<Guid, Guid>(Guid.NewGuid());
+        }
+
+        public class TypeA { }
+        public class TypeB : TypeA { }
+        public class TypeC : TypeB { }
+
+        [TestMethod]
+        public async Task Wait_is_Awaitable_A_B_C()
+        {
+            // ItemType = TypeA
+            await Wait_is_Awaitable<TypeA, TypeA>(new TypeA());
+            await Wait_is_Awaitable<TypeA, TypeA>(new TypeB());
+            await Wait_is_Awaitable<TypeA, TypeA>(new TypeC());
+
+            await Wait_is_Awaitable<TypeA, TypeB>(new TypeB());
+            await Wait_is_Awaitable<TypeA, TypeB>(new TypeC());
+
+            await Wait_is_Awaitable<TypeA, TypeC>(new TypeC());
+
+            // ItemType = TypeB
+            await Wait_is_Awaitable<TypeB, TypeA>(new TypeB());
+            await Wait_is_Awaitable<TypeB, TypeA>(new TypeC());
+
+            await Wait_is_Awaitable<TypeB, TypeB>(new TypeB());
+            await Wait_is_Awaitable<TypeB, TypeB>(new TypeC());
+
+            await Wait_is_Awaitable<TypeB, TypeC>(new TypeC());
+
+            // ItemType = TypeC
+            await Wait_is_Awaitable<TypeC, TypeA>(new TypeC());
+
+            await Wait_is_Awaitable<TypeC, TypeB>(new TypeC());
+
+            await Wait_is_Awaitable<TypeC, TypeC>(new TypeC());
+        }
+
+        [TestMethod]
+        public async Task Awaitable_From_Item()
+        {
+            var expected = Guid.NewGuid();
+            var awaitable = Awaitable.FromItem(expected);
+            Assert.AreEqual(expected, await awaitable);
+        }
+
         [TestMethod]
         public async Task Fiber_Is_Serializable()
         {
@@ -172,14 +258,14 @@ namespace Microsoft.Bot.Builder.Tests
                 var previous = fiber;
                 AssertSerializable(container, ref fiber);
                 Assert.IsFalse(object.ReferenceEquals(previous, fiber));
-                Assert.IsTrue(object.ReferenceEquals(previous.FrameFactory, fiber.FrameFactory));
+                Assert.IsTrue(object.ReferenceEquals(((IFiber<C>)previous).Waits, ((IFiber<C>)fiber).Waits));
             }
         }
 
         [Serializable]
         private sealed class SerializableMethod : IMethod
         {
-            async Task<IWait<C>> IMethod.CodeAsync<T>(IFiber<C> fiber, C context, IAwaitable<T> item)
+            async Task<IWait<C>> IMethod.CodeAsync<T>(IFiber<C> fiber, C context, IAwaitable<T> item, CancellationToken token)
             {
                 return NullWait<C>.Instance;
             }
@@ -200,7 +286,7 @@ namespace Microsoft.Bot.Builder.Tests
 
                 // assert
                 AssertSerializable(container, ref fiber);
-                var next = await fiber.PollAsync(Context);
+                var next = await fiber.PollAsync(Context, Token);
                 Assert.AreEqual(Need.Done, next.Need);
             }
         }
@@ -215,7 +301,7 @@ namespace Microsoft.Bot.Builder.Tests
                 var fiber = container.Resolve<IFiberLoop<C>>();
 
                 // assert
-                var next = await fiber.PollAsync(Context);
+                var next = await fiber.PollAsync(Context, Token);
                 Assert.AreEqual(Need.None, next.Need);
             }
         }
@@ -230,14 +316,14 @@ namespace Microsoft.Bot.Builder.Tests
                 var method = MockMethod();
                 var value = 42;
                 method
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value)), Token))
                     .ReturnsAsync(NullWait<C>.Instance);
 
                 // act
                 fiber.Call(method.Object.CodeAsync, value);
 
                 // assert
-                var next = await fiber.PollAsync(Context);
+                var next = await fiber.PollAsync(Context, Token);
                 Assert.AreEqual(Need.Done, next.Need);
                 method.VerifyAll();
             }
@@ -253,7 +339,7 @@ namespace Microsoft.Bot.Builder.Tests
                 var fiber = container.Resolve<IFiberLoop<C>>();
                 var method = MockMethod();
                 method
-                    .Setup(m => m.CodeAsync(fiber, Context, It.IsAny<IAwaitable<int>>()))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.IsAny<IAwaitable<int>>(), Token))
                     .Returns(async () => { return fiber.Done(42); });
 
                 // act
@@ -275,7 +361,7 @@ namespace Microsoft.Bot.Builder.Tests
                 var method = MockMethod();
                 var value = 42;
                 method
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value)), Token))
                     .ReturnsAsync(NullWait<C>.Instance);
 
                 // act
@@ -298,10 +384,10 @@ namespace Microsoft.Bot.Builder.Tests
                 var valueOne = 42;
                 var valueTwo = "hello world";
                 method
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(valueOne))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(valueOne)), Token))
                     .Returns(async () => { return fiber.Call(method.Object.CodeAsync, valueTwo); });
                 method
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(valueTwo))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(valueTwo)), Token))
                     .ReturnsAsync(NullWait<C>.Instance);
 
                 // act
@@ -326,13 +412,13 @@ namespace Microsoft.Bot.Builder.Tests
                 var value2 = "hello world";
                 var value3 = Guid.NewGuid();
                 methodOne
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value1))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value1)), Token))
                     .Returns(async () => { return fiber.Call<C, string, Guid>(methodTwo.Object.CodeAsync, value2, methodOne.Object.CodeAsync); });
                 methodTwo
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value2))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value2)), Token))
                     .Returns(async () => { return fiber.Done(value3); });
                 methodOne
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value3))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value3)), Token))
                     .ReturnsAsync(NullWait<C>.Instance);
 
                 // act
@@ -358,10 +444,10 @@ namespace Microsoft.Bot.Builder.Tests
                 var value2 = "hello world";
                 var value3 = Guid.NewGuid();
                 methodOne
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value1))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value1)), Token))
                     .Returns(async () => { return fiber.Call<C, string>(methodTwo.Object.CodeAsync, value2); });
                 methodTwo
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value2))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value2)), Token))
                     .Returns(async () => { return fiber.Done(value3); });
 
                 // act
@@ -384,7 +470,7 @@ namespace Microsoft.Bot.Builder.Tests
                 var method = MockMethod();
                 var value = 42;
                 method
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value)), Token))
                     .Returns(async () => { throw new CodeException(); });
 
                 // act
@@ -411,13 +497,13 @@ namespace Microsoft.Bot.Builder.Tests
                 var value2 = "hello world";
                 var value3 = Guid.NewGuid();
                 methodOne
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value1))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value1)), Token))
                     .Returns(async () => { return fiber.Call<C, string, Guid>(methodTwo.Object.CodeAsync, value2, methodOne.Object.CodeAsync); });
                 methodTwo
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value2))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value2)), Token))
                     .Returns(async () => { throw new CodeException(); });
                 methodOne
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(ExceptionOfType<Guid, CodeException>())))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(ExceptionOfType<Guid, CodeException>()), Token))
                     .ReturnsAsync(NullWait<C>.Instance);
 
                 // act
@@ -442,13 +528,13 @@ namespace Microsoft.Bot.Builder.Tests
                 var value2 = "hello world";
                 var value3 = Guid.NewGuid();
                 methodOne
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value1))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value1)), Token))
                     .Returns(async () => { return fiber.Call<C, string, Guid>(methodTwo.Object.CodeAsync, value2, methodOne.Object.CodeAsync); });
                 methodTwo
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value2))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value2)), Token))
                     .Returns(async () => { return fiber.Done("not a guid"); });
                 methodOne
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(ExceptionOfType<Guid, InvalidTypeException>())))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(ExceptionOfType<Guid, InvalidTypeException>()), Token))
                     .ReturnsAsync(NullWait<C>.Instance);
 
                 // act
@@ -471,7 +557,7 @@ namespace Microsoft.Bot.Builder.Tests
                 string valueAsString = "hello world";
                 object valueAsObject = valueAsString;
                 method
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(valueAsObject))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(valueAsObject)), Token))
                     .ReturnsAsync(NullWait<C>.Instance);
 
                 // act
@@ -494,8 +580,8 @@ namespace Microsoft.Bot.Builder.Tests
                 var method = MockMethod();
                 var value = 42;
                 method
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value))))
-                    .Returns(async () => { await fiber.PollAsync(Context); return null; });
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value)), Token))
+                    .Returns(async () => { await fiber.PollAsync(Context, Token); return null; });
 
                 // act
                 fiber.Call(method.Object.CodeAsync, value);
@@ -516,7 +602,7 @@ namespace Microsoft.Bot.Builder.Tests
                 var method = MockMethod();
                 var value = "hello world";
                 method
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value)), Token))
                     .Returns(async () => fiber.Done(42));
 
                 // act
@@ -525,7 +611,7 @@ namespace Microsoft.Bot.Builder.Tests
                 await PollAsync(fiber);
 
                 // assert
-                method.Verify(m => m.CodeAsync(fiber, Context, It.Is(Item(value))), Times.Exactly(1));
+                method.Verify(m => m.CodeAsync(fiber, Context, It.Is(Item(value)), Token), Times.Exactly(1));
             }
         }
 
@@ -539,7 +625,7 @@ namespace Microsoft.Bot.Builder.Tests
                 var method = MockMethod();
                 var value = "hello world";
                 method
-                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value))))
+                    .Setup(m => m.CodeAsync(fiber, Context, It.Is(Item(value)), Token))
                     .Returns(async () => fiber.Done(42));
 
                 // act
@@ -549,7 +635,7 @@ namespace Microsoft.Bot.Builder.Tests
                 await PollAsync(fiber);
 
                 // assert
-                method.Verify(m => m.CodeAsync(fiber, Context, It.Is(Item(value))), Times.Exactly(CallCount));
+                method.Verify(m => m.CodeAsync(fiber, Context, It.Is(Item(value)), Token), Times.Exactly(CallCount));
             }
         }
     }

@@ -31,21 +31,27 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-import ses = require('./Session');
+import { Session } from './Session';
+import { IRecognizeContext } from './dialogs/IntentRecognizer';
 
 export var channels = {
     facebook: 'facebook',
     skype: 'skype',
+    msteams: 'msteams',
     telegram: 'telegram',
     kik: 'kik',
     email: 'email',
     slack: 'slack',
     groupme: 'groupme',
     sms: 'sms',
-    emulator: 'emulator'
+    emulator: 'emulator',
+    directline: 'directline',
+    webchat: 'webchat',
+    console: 'console',
+    cortana: 'cortana'
 };
 
-export function supportsKeyboards(session: ses.Session, buttonCnt = 100) {
+export function supportsKeyboards(session: Session, buttonCnt = 100) {
     switch (getChannelId(session)) {
         case channels.facebook:
             return (buttonCnt <= 10);
@@ -53,30 +59,47 @@ export function supportsKeyboards(session: ses.Session, buttonCnt = 100) {
             return (buttonCnt <= 20);
         case channels.slack:
         case channels.telegram:
-        case channels.emulator:
             return (buttonCnt <= 100);
         default:
             return false;
     }
 }
 
-export function supportsCardActions(session: ses.Session, buttonCnt = 100) {
+export function supportsCardActions(session: Session, buttonCnt = 100) {
     switch (getChannelId(session)) {
         case channels.facebook:
         case channels.skype:
+        case channels.msteams:
             return (buttonCnt <= 3);
         case channels.slack:
+        case channels.emulator:
+        case channels.directline:
+        case channels.webchat:
+        case channels.cortana:
             return (buttonCnt <= 100);
         default:
             return false;
     }
 }
 
-export function getChannelId(addressable: ses.Session|IMessage|IAddress): string {
+export function hasMessageFeed(session: Session) {
+    switch (getChannelId(session)) {
+        case channels.cortana:
+            return false;
+        default:
+            return true;
+    }
+}
+
+export function maxActionTitleLength(session: Session) {
+    return 20;
+}
+
+export function getChannelId(addressable: Session|IRecognizeContext|IMessage|IAddress): string {
     var channelId: string;
     if (addressable) {
         if (addressable.hasOwnProperty('message')) {
-            channelId = (<ses.Session>addressable).message.address.channelId;
+            channelId = (<Session>addressable).message.address.channelId;
         } else if (addressable.hasOwnProperty('address')) {
             channelId = (<IMessage>addressable).address.channelId;
         } else if (addressable.hasOwnProperty('channelId')) {

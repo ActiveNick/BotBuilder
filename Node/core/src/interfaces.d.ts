@@ -31,28 +31,50 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
+type TextType = string|string[];
+type MessageType = IMessage|IIsMessage;
+type TextOrMessageType = TextType|MessageType;
+type CardActionType = ICardAction|IIsCardAction;
+type CardImageType = ICardImage|IIsCardImage;
+type AttachmentType = IAttachment|IIsAttachment;
+type MatchType = RegExp|string|(RegExp|string)[];
+type ValueListType = string|string[];
+
+
 interface IEvent {
     type: string;
-    agent: string;
-    source: string;
-    sourceEvent: any;
     address: IAddress;
-    user: IIdentity;
+    agent?: string;
+    source?: string;
+    sourceEvent?: any;
+    user?: IIdentity;
 }
 
 interface IMessage extends IEvent {
-    timestamp: string;              // Timestamp of message given by chat service 
-    summary: string;                // Text to be displayed by as fall-back and as short description of the message content in e.g. list of recent conversations 
-    text: string;                   // Message text  
-    textLocale: string;             // Identified language of the message text.
-    attachments: IAttachment[];     // This is placeholder for structured objects attached to this message 
-    entities: any[];                // This property is intended to keep structured data objects intended for Client application e.g.: Contacts, Reservation, Booking, Tickets. Structure of these object objects should be known to Client application.
-    textFormat: string;             // Format of text fields [plain|markdown|xml] default:markdown
-    attachmentLayout: string;       // AttachmentLayout - hint for how to deal with multiple attachments Values: [list|carousel] default:list
+    timestamp?: string;              // UTC Time when message was sent (set by service)
+    localTimestamp?: string;         // Local time when message was sent (set by client or bot, Ex: 2016-09-23T13:07:49.4714686-07:00)
+    summary?: string;                // Text to be displayed by as fall-back and as short description of the message content in e.g. list of recent conversations 
+    text?: string;                   // Message text
+    speak?: string;                  // Spoken message as Speech Synthesis Markup Language (SSML)
+    textLocale?: string;             // Identified language of the message text.
+    attachments?: IAttachment[];     // This is placeholder for structured objects attached to this message 
+    suggestedActions: ISuggestedActions; // Quick reply actions that can be suggested as part of the message 
+    entities?: any[];                // This property is intended to keep structured data objects intended for Client application e.g.: Contacts, Reservation, Booking, Tickets. Structure of these object objects should be known to Client application.
+    textFormat?: string;             // Format of text fields [plain|markdown|xml] default:markdown
+    attachmentLayout?: string;       // AttachmentLayout - hint for how to deal with multiple attachments Values: [list|carousel] default:list
+    inputHint?: string;              // Hint for clients to indicate if the bot is waiting for input or not.
 }
 
 interface IIsMessage {
     toMessage(): IMessage;
+}
+
+interface IMessageOptions {
+    attachments?: AttachmentType[];
+    attachmentLayout?: string;
+    entities?: any[];
+    textFormat?: string;
+    inputHint?: string;
 }
 
 interface IIdentity {
@@ -95,6 +117,36 @@ interface IThumbnailCard extends IKeyboard {
     tap: ICardAction;               // This action will be activated when user taps on the section bubble. 
 }
 
+interface IMediaCard extends IKeyboard{
+    title: string;                  // Title of the Card 
+    subtitle: string;               // Subtitle appears just below Title field, differs from Title in font styling only 
+    text: string;                   // Text field appears just below subtitle, differs from Subtitle in font styling only 
+    image: ICardImage;              // Messaging supports all media formats: audio, video, images and thumbnails as well to optimize content download.
+    media: ICardMediaUrl[];         // Media source for video, audio or animations
+    autoloop: boolean;              // Should the media source reproduction run in a lool
+    autostart: boolean;             // Should the media start automatically
+    shareable: boolean;             // Should media be shareable
+}
+
+interface IVideoCard extends IMediaCard {
+    aspect: string;                 //Hint of the aspect ratio of the video or animation. (16:9)(4:3)
+}
+
+interface IAnimationCard extends IMediaCard {
+}
+
+interface IAudioCard extends IMediaCard {
+}
+
+interface IIsCardMedia{
+    toMedia(): ICardMediaUrl;      //Returns the media to serialize
+}
+
+interface ICardMediaUrl {
+    url: string,                    // Url to audio, video or animation media
+    profile: string                 // Optional profile hint to the client to differentiate multiple MediaUrl objects from each other
+}
+
 interface IReceiptCard {
     title: string;                  // Title of the Card 
     items: IReceiptItem[];          // Array of receipt items.
@@ -131,6 +183,16 @@ interface IIsCardAction {
     toAction(): ICardAction;
 }
 
+interface ISuggestedActions {
+    to?: string[]; // Optional recipients of the suggested actions. Not supported in all channels.
+    actions: ICardAction[]; // Quick reply actions that can be suggested as part of the message 
+}
+
+
+interface IIsSuggestedActions {
+    toSuggestedActions(): ISuggestedActions;
+}
+
 interface ICardImage {
     url: string;                    // Thumbnail image for major content property. 
     alt: string;                    // Image description intended for screen readers 
@@ -163,37 +225,16 @@ interface ILocationV2 {
 }
 
 interface ILocalizer {
-    initialize(localizerSettings?: ILocalizerSettings): void;
-    load(locale: string, callback: ErrorCallback): void;     
+    load(locale: string, callback?: ErrorCallback): void;     
     defaultLocale(locale?: string): string   
     gettext(locale: string, msgid: string, namespace?: string): string;
     trygettext(locale: string, msgid: string, namespace?: string): string;
     ngettext(locale: string, msgid: string, msgid_plural: string, count: number, namespace?: string): string;
 }
 
-interface ILocalizerSettings {
+interface IDefaultLocalizerSettings {
     botLocalePath?: string;
     defaultLocale?: string;
-}
-
-interface ISession {
-    sessionState: ISessionState;
-    message: IMessage;
-    userData: any;
-    dialogData: any;
-    localizer?: ILocalizer;
-    error(err: Error): ISession;
-    gettext(msgid: string, ...args: any[]): string;
-    ngettext(msgid: string, msgid_plural: string, count: number): string;
-    send(message: string, ...args: any[]): ISession;
-    send(msg: IMessage): ISession;
-    getMessageReceived(): any;
-    messageSent(): boolean;
-    beginDialog<T>(id: string, args?: T): ISession;
-    replaceDialog<T>(id: string, args?: T): ISession;
-    endDialog(result?: any): ISession;
-    reset(id: string): ISession;
-    isReset(): boolean;
 }
 
 interface ISessionState {
@@ -207,23 +248,16 @@ interface IDialogState {
     state: any;
 }
 
-interface IBeginDialogHandler {
-    (session: ISession, args: any, next: (handled: boolean) => void): void; 
-}
-
-interface IDialogHandler<T> {
-    (session: ISession, args?: T): void;
-}
-
 interface IIntent {
     intent: string;
     score: number;
 }
 
-interface IEntity {
-    entity: string;
+interface IEntity<T> {
+    entity: T;
     type: string;
     startIndex?: number;
     endIndex?: number;
     score?: number;
 }
+

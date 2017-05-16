@@ -31,378 +31,251 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-import dlg = require('./Dialog');
-import ses = require('../Session');
-import consts = require('../consts');
-import entities = require('./EntityRecognizer');
-import mb = require('../Message');
-import Channel = require('../Channel');
-import dl = require('../bots/Library');
-import kb = require('../cards/Keyboard');
-import ca = require('../cards/CardAction');
-import logger = require('../logger');
+import { Session } from '../Session';
+import { Dialog, ResumeReason } from './Dialog';
+import { systemLib, IRouteResult } from '../bots/Library';
+import { LegacyPrompts, IPromptsOptions } from '../deprecated/LegacyPrompts';
+import { IChoice } from './PromptRecognizers';
+import { IPromptOptions, PromptType } from './Prompt';
+import { PromptAttachment, IPromptAttachmentOptions } from './PromptAttachment';
+import { PromptChoice, IPromptChoiceOptions } from './PromptChoice';
+import { PromptConfirm } from './PromptConfirm';
+import { PromptNumber, IPromptNumberOptions } from './PromptNumber';
+import { PromptText } from './PromptText';
+import { PromptTime } from './PromptTime';
+import * as consts from '../consts';
+import * as utils from '../utils';
 
-export enum PromptType { text, number, confirm, choice, time, attachment }
-
-export enum ListStyle { none, inline, list, button, auto }
-
-export interface IPromptOptions {
-    retryPrompt?: string|string[]|IMessage|IIsMessage;
-    maxRetries?: number;
-    refDate?: number;
-    listStyle?: ListStyle;
-    promptAfterAction?: boolean;
+export interface IDisambiguateChoices {
+    [label: string]: IRouteResult;
 }
 
-export interface IPromptArgs extends IPromptOptions {
-    promptType: PromptType;
-    prompt: string|string[]|IMessage|IIsMessage;
-    enumValues?: string[];
-    retryCnt?: number;
-    localizationNamespace?: string;
+interface IPrompts {
+    text(session: Session, prompt: TextOrMessageType, options?: IPromptOptions): void;
+    number(session: Session, prompt: TextOrMessageType, options?: IPromptNumberOptions): void;
+    confirm(session: Session, prompt: TextOrMessageType, options?: IPromptOptions): void;
+    choice(session: Session, prompt: TextOrMessageType, choices: string|(string|IChoice)[]|Object, options?: IPromptChoiceOptions): void;
+    time(session: Session, prompt: TextOrMessageType, options?: IPromptOptions): void;
+    attachment(session: Session, prompt: TextOrMessageType, options?: IPromptAttachmentOptions): void;
+    disambiguate(session: Session, prompt: TextOrMessageType, choices: IDisambiguateChoices, options?: IPromptOptions): void;
+    customize(type: PromptType, dialog: Dialog): IPrompts;
+
+    /** deprecated */
+    configure(options: IPromptsOptions): void;
 }
 
-export interface IPromptResult<T> extends dlg.IDialogResult<T> {
-    score: number;
-    promptType?: PromptType;
-}
+const promptPrefix = consts.Library.system + ':prompt-';
 
-export interface IPromptRecognizer {
-    recognize<T>(args: IPromptRecognizerArgs, callback: (result: IPromptResult<T>) => void, session?: ISession): void;
-}
-
-export interface IPromptRecognizerArgs {
-    promptType: PromptType;
-    locale: string;
-    utterance: string;
-    attachments: IAttachment[];
-    enumValues?: string[];
-    refDate?: number;
-}
-
-export interface IPromptsOptions {
-    recognizer?: IPromptRecognizer;
-    promptAfterAction?: boolean;
-}
-
-export interface IChronoDuration extends IEntity {
-    resolution: {
-        start: Date;
-        end?: Date;
-        ref?: Date;
-    };
-}
-
-export class SimplePromptRecognizer implements IPromptRecognizer {
-    public recognize(args: IPromptRecognizerArgs, callback: (result: IPromptResult<any>) => void, session?: ISession): void {
-        // Recognize value
-        var score = 0.0;
-        var response: any;
-        var text = args.utterance.trim();
-        switch (args.promptType) {
-            default:
-            case PromptType.text:
-                // This is an open ended question so it's a little tricky to know what to pass as a confidence
-                // score. Currently we're saying that we have 0.1 confidence that we understand the users intent
-                // which will give all of the prompts parents a chance to capture the utterance. If no one 
-                // captures the utterance we'll return the full text of the utterance as the result.
-                score = 0.5;
-                response = text;
-                break;
-            case PromptType.number:
-                var n = entities.EntityRecognizer.parseNumber(text);
-                if (!isNaN(n)) {
-                    var score = n.toString().length / text.length;
-                    response = n;
-                }
-                break;
-            case PromptType.confirm:
-                var b = entities.EntityRecognizer.parseBoolean(text);
-                if (typeof b !== 'boolean') {
-                    var n = entities.EntityRecognizer.parseNumber(text);
-                    if (!isNaN(n) && n > 0 && n <= 2) {
-                        b = (n === 1);
-                    }
-                    
-                }
-                if (typeof b == 'boolean') {
-                    score = 1.0;
-                    response = b;
-                }
-                break;
-            case PromptType.time:
-                var entity = entities.EntityRecognizer.recognizeTime(text, args.refDate ? new Date(args.refDate) : null);
-                if (entity) {
-                    score = entity.entity.length / text.length;
-                    response = entity;
-                } 
-                break;
-            case PromptType.choice:
-                var best = entities.EntityRecognizer.findBestMatch(args.enumValues, text);
-                if (!best) {
-                    var n = entities.EntityRecognizer.parseNumber(text);
-                    if (!isNaN(n) && n > 0 && n <= args.enumValues.length) {
-                        best = { index: n - 1, entity: args.enumValues[n - 1], score: 1.0 };
-                    }
-                }
-                if (best) {
-                    score = best.score;
-                    response = best;
-                }
-                break;
-            case PromptType.attachment:
-                if (args.attachments && args.attachments.length > 0) {
-                    score = 1.0;
-                    response = args.attachments;
-                }
-                break;
-        }
-
-        // Return results
-        if (score > 0) {
-            callback({ score: score, resumed: dlg.ResumeReason.completed, promptType: args.promptType, response: response });
-        } else {
-            callback({ score: score, resumed: dlg.ResumeReason.notCompleted, promptType: args.promptType });
-        }
-    }
-} 
-
-export class Prompts extends dlg.Dialog {
-    private static options: IPromptsOptions = {
-        recognizer: new SimplePromptRecognizer(),
-        promptAfterAction: true
-    };
-    
-    private static defaultRetryPrompt = {
-        text: "default_text",
-        number: "default_number",
-        confirm: "default_confirm",
-        choice: "default_choice", 
-        time: "default_time", 
-        attachment: "default_file"  
-    };
-
-    public begin(session: ses.Session, args: IPromptArgs): void {
-        args = <any>args || {};
-        args.promptAfterAction = args.hasOwnProperty('promptAfterAction') ? args.promptAfterAction : Prompts.options.promptAfterAction;
-        args.retryCnt = 0;
-        for (var key in args) {
-            if (args.hasOwnProperty(key)) {
-                session.dialogData[key] = (<any>args)[key];
-            }
-        }
-        this.sendPrompt(session, args);
-    }
-
-    public replyReceived(session: ses.Session, result?: IPromptResult<any>): void {
-        var args: IPromptArgs = session.dialogData;
-        if (result.error || result.resumed == dlg.ResumeReason.completed) {
-            result.promptType = args.promptType;
-            session.endDialogWithResult(result);
-        } else if (typeof args.maxRetries === 'number' && args.retryCnt >= args.maxRetries) {
-            result.promptType = args.promptType;
-            result.resumed = dlg.ResumeReason.notCompleted;
-            session.endDialogWithResult(result);
-        } else {
-            args.retryCnt++;
-            this.sendPrompt(session, args, true);
-        }
-    }
-    public dialogResumed<T>(session: ses.Session, result: dlg.IDialogResult<any>): void {
-        // Comming back from an action so re-prompt the user.
-        var args: IPromptArgs = session.dialogData;
-        if (args.promptAfterAction) {
-            this.sendPrompt(session, args);
-        }
-    }
-
-    public recognize(context: dlg.IRecognizeContext, cb: (err: Error, result: dlg.IRecognizeResult) => void): void {
-        var args: IPromptArgs = context.dialogData;
-        Prompts.options.recognizer.recognize({
-            promptType: args.promptType,
-            utterance: context.message.text,
-            locale: context.message.textLocale,
-            attachments: context.message.attachments,
-            enumValues: args.enumValues,
-            refDate: args.refDate
-        }, (result) => {
-            if (result.error) {
-                cb(result.error, null);
-            } else {
-                cb(null, result);
-            }
-        });
-    }
-
-    
-    private sendPrompt(session: ses.Session, args: IPromptArgs, retry = false): void {
-        logger.debug("prompts::sendPrompt called");                                               
-
-        if (retry && typeof args.retryPrompt === 'object' && !Array.isArray(args.retryPrompt)) {
-            // Send native IMessage
-            session.send(args.retryPrompt);            
-        } else if (typeof args.prompt === 'object' && !Array.isArray(args.prompt)) {
-            // Send native IMessage
-            session.send(args.prompt);            
-        } else {
-            // Calculate list style.
-            var style = ListStyle.none;
-            if (args.promptType == PromptType.choice || args.promptType == PromptType.confirm) {
-                style = args.listStyle;
-                if (style == ListStyle.auto) {
-                    if (Channel.supportsKeyboards(session, args.enumValues.length)) {
-                        style = ListStyle.button;
-                    } else if (!retry) {
-                        style = args.enumValues.length < 3 ? ListStyle.inline : ListStyle.list;
+export const Prompts = <IPrompts>{
+    text: (session, prompt, options) => {
+        validateSession(session);
+        let args: IPromptOptions = utils.clone(options || {});
+        args.prompt = prompt || options.prompt;
+        session.beginDialog(promptPrefix + 'text', args);
+    },
+    number: (session, prompt, options) => {
+        validateSession(session);
+        let args: IPromptNumberOptions = utils.clone(options || {});
+        args.prompt = prompt || options.prompt;
+        session.beginDialog(promptPrefix + 'number', args);
+    },
+    confirm: (session, prompt, options) => {
+        validateSession(session);
+        let args: IPromptOptions = utils.clone(options || {});
+        args.prompt = prompt || options.prompt;
+        session.beginDialog(promptPrefix + 'confirm', args);
+    },
+    choice: (session, prompt, choices, options) => {
+        validateSession(session);
+        let args: IPromptChoiceOptions = utils.clone(options || {});
+        args.prompt = prompt || options.prompt;
+        if (choices) {
+            // Map choices
+            args.choices = [];
+            if (Array.isArray(choices)) {
+                choices.forEach((value) => {
+                    if (typeof value === 'string') {
+                        args.choices.push({ value: value });
                     } else {
-                        style = ListStyle.none;
+                        args.choices.push(value);
                     }
-                }
-            }
-            
-            // Get message message
-            var prompt: string;
-            if (retry) {
-                if (args.retryPrompt) {
-                    prompt = mb.Message.randomPrompt(<any>args.retryPrompt);
-                } else {
-                    var type = PromptType[args.promptType];
-                    prompt = mb.Message.randomPrompt((<any>Prompts.defaultRetryPrompt)[type]);
-                    args.localizationNamespace = consts.Library.system;
-                    logger.debug("prompts::sendPrompt setting ns to %s", args.localizationNamespace);                                                                   
-                }
+                });
+            } else if (typeof choices === 'string') {
+                choices.split('|').forEach((value) => {
+                    args.choices.push({ value: value });
+                });
             } else {
-                prompt = mb.Message.randomPrompt(<any>args.prompt);
-            }
-                                                                               
-            var locale:string = session.preferredLocale();
-            logger.debug("prompts::preferred locale %s", locale);    
-            if (!locale && session.localizer) {
-                locale = session.localizer.defaultLocale();
-                logger.debug("prompts::sendPrompt using default locale %s", locale);                                                                                   
-            }
-            prompt = session.localizer.gettext(locale, prompt, args.localizationNamespace);
-            logger.debug("prompts::sendPrompt localized prompt %s", prompt);                                                                   
-            
-                        
-            // Append list
-            var connector = '';
-            var list: string;
-            var msg = new mb.Message();
-            switch (style) {
-                case ListStyle.button:
-                    var buttons: ca.CardAction[] = [];
-                    for (var i = 0; i < session.dialogData.enumValues.length; i++) {
-                        var option = session.dialogData.enumValues[i];
-                        buttons.push(ca.CardAction.imBack(session, option, option));
+                for (let key in choices) {
+                    if (choices.hasOwnProperty(key)) {
+                        args.choices.push({ value: key });
                     }
-                    msg.text(prompt)
-                       .attachments([new kb.Keyboard(session).buttons(buttons)]);
-                    break;
-                case ListStyle.inline:
-                    list = ' (';
-                    args.enumValues.forEach((v, index) => {
-                        var value = v.toString();
-                        list += connector + (index + 1) + '. ' + session.localizer.gettext(locale, value, consts.Library.system);
-                        if (index == args.enumValues.length - 2) {
-                            connector = index == 0 ? session.localizer.gettext(locale, "list_or", consts.Library.system) : session.localizer.gettext(locale, "list_or_more", consts.Library.system);
-                        } else {
-                            connector = ', ';
-                        } 
-                    });
-                    list += ')';
-                    msg.text(prompt + '%s', list);
-                    break;
-                case ListStyle.list:
-                    list = '\n   ';
-                    args.enumValues.forEach((v, index) => {
-                        var value = v.toString();
-                        list += connector + (index + 1) + '. ' + session.localizer.gettext(locale, value, args.localizationNamespace);
-                        connector = '\n   ';
-                    });
-                    msg.text(prompt + '%s', list);
-                    break;
-                default:
-                    msg.text(prompt);
-                    break;
-            }
-            
-            // Send message
-            session.send(msg);
-        }
-        session.sendBatch();
-    }
-
-    static configure(options: IPromptsOptions): void {
-        if (options) {
-            for (var key in options) {
-                if (options.hasOwnProperty(key)) {
-                    (<any>Prompts.options)[key] = (<any>options)[key];
                 }
             }
         }
-    }
-
-    static text(session: ses.Session, prompt: string|string[]|IMessage|IIsMessage): void {
-        beginPrompt(session, {
-            promptType: PromptType.text,
-            prompt: prompt
+        session.beginDialog(promptPrefix + 'choice', args);
+    },
+    time: (session, prompt, options) => {
+        validateSession(session);
+        let args: IPromptOptions = utils.clone(options || {});
+        args.prompt = prompt || options.prompt;
+        session.beginDialog(promptPrefix + 'time', args);
+    },
+    attachment: (session, prompt, options) => {
+        validateSession(session);
+        let args: IPromptOptions = utils.clone(options || {});
+        args.prompt = prompt || options.prompt;
+        session.beginDialog(promptPrefix + 'attachment', args);
+    },
+    disambiguate: (session, prompt, choices, options) => {
+        validateSession(session);
+        session.beginDialog(consts.DialogId.Disambiguate, {
+            prompt: prompt,
+            choices: choices,
+            options: options
         });
+    },
+    customize: (type, dialog) => {
+        systemLib.dialog(promptPrefix + PromptType[type], dialog, true);
+    },
+    configure: (options) => {
+        console.warn("Prompts.configure() has been deprecated as of version 3.8. Consider using custom prompts instead.");
+        LegacyPrompts.configure(options);
     }
+};
 
-    static number(session: ses.Session, prompt: string|string[]|IMessage|IIsMessage, options?: IPromptOptions): void {
-        var args: IPromptArgs = <any>options || {};
-        args.promptType = PromptType.number;
-        args.prompt = prompt;
-        beginPrompt(session, args);
+function validateSession(session: Session): void {
+    // Make sure that the session is passed, otherwise throw a clear error 
+    if (!session || typeof session != 'object') {
+        throw 'Session should be provided as first parameter.';
     }
+}
 
-    static confirm(session: ses.Session, prompt: string|string[]|IMessage|IIsMessage, options?: IPromptOptions): void {
-        var args: IPromptArgs = <any>options || {};
-        args.promptType = PromptType.confirm;
-        args.prompt = prompt;
-        args.enumValues = ['confirm_yes','confirm_no'];
-        args.listStyle = args.hasOwnProperty('listStyle') ? args.listStyle : ListStyle.auto;
-        beginPrompt(session, args);
-    }
+// Install base prompts
+Prompts.customize(PromptType.attachment, new PromptAttachment());
+Prompts.customize(PromptType.choice, new PromptChoice());
+Prompts.customize(PromptType.confirm, new PromptConfirm());
+Prompts.customize(PromptType.number, new PromptNumber());
+Prompts.customize(PromptType.text, new PromptText());
+Prompts.customize(PromptType.time, new PromptTime());
 
-    static choice(session: ses.Session, prompt: string|string[]|IMessage|IIsMessage, choices: string|Object|string[], options?: IPromptOptions): void {
-        var args: IPromptArgs = <any>options || {};
-        args.promptType = PromptType.choice;
-        args.prompt = prompt;
-        args.listStyle = args.hasOwnProperty('listStyle') ? args.listStyle : ListStyle.auto;
-        var c = entities.EntityRecognizer.expandChoices(choices);
-        if (c.length == 0) {
-            console.error("0 length choice for prompt:", prompt);
-            throw "0 length choice list supplied";
+/**
+ * Internal dialog that prompts a user to confirm a cancelAction().
+ * dialogArgs: { 
+ *      localizationNamespace: string;
+ *      confirmPrompt: string; 
+ *      message?: string;
+ *      dialogIndex?: number;
+ *      endConversation?: boolean;
+ * }
+ */
+systemLib.dialog(consts.DialogId.ConfirmCancel, [
+    function (session, args) {
+        session.dialogData.localizationNamespace = args.localizationNamespace;
+        session.dialogData.dialogIndex = args.dialogIndex;
+        session.dialogData.message = args.message;
+        session.dialogData.endConversation = args.endConversation;
+        Prompts.confirm(session, args.confirmPrompt, { localizationNamespace: args.localizationNamespace });
+    },
+    function (session, results) {
+        if (results.response) {
+            // Send optional message
+            var args = session.dialogData;
+            if (args.message) {
+                session.sendLocalized(args.localizationNamespace, args.message);
+            }
+
+            // End conversation or cancel dialog
+            if (args.endConversation) {
+                session.endConversation();
+            } else {
+                session.cancelDialog(args.dialogIndex);
+            }
+        } else {
+            session.endDialogWithResult({ resumed: ResumeReason.reprompt });
         }
-        args.enumValues = c;
-        beginPrompt(session, args);
     }
+]);
 
-    static time(session: ses.Session, prompt: string|string[]|IMessage|IIsMessage, options?: IPromptOptions): void {
-        var args: IPromptArgs = <any>options || {};
-        args.promptType = PromptType.time;
-        args.prompt = prompt;
-        beginPrompt(session, args);
+/**
+ * Internal dialog that prompts a user to confirm a that a root dialog should be
+ * interrupted with a new dialog.
+ * dialogArgs: { 
+ *      localizationNamespace: string;
+ *      confirmPrompt: string; 
+ *      dialogId: string;
+ *      dialogArgs?: any;
+ * }
+ */
+systemLib.dialog(consts.DialogId.ConfirmInterruption, [
+    function (session, args) {
+        session.dialogData.dialogId = args.dialogId;
+        session.dialogData.dialogArgs = args.dialogArgs;
+        Prompts.confirm(session, args.confirmPrompt, { localizationNamespace: args.localizationNamespace });
+    },
+    function (session, results) {
+        if (results.response) {
+            var args = session.dialogData;
+            session.clearDialogStack();
+            session.beginDialog(args.dialogId, args.dialogArgs);
+        } else {
+            session.endDialogWithResult({ resumed: ResumeReason.reprompt });
+        }
     }
-    
-    static attachment(session: ses.Session, prompt: string|string[]|IMessage|IIsMessage, options?: IPromptOptions): void {
-        var args: IPromptArgs = <any>options || {};
-        args.promptType = PromptType.attachment;
-        args.prompt = prompt;
-        beginPrompt(session, args);
-    }
-}
-dl.systemLib.dialog(consts.DialogId.Prompts, new Prompts());
+]);
 
-function beginPrompt(session: ses.Session, args: IPromptArgs) {
-    // Fixup prompts
-    if (typeof args.prompt == 'object' && (<IIsMessage>args.prompt).toMessage) {
-        args.prompt = (<IIsMessage>args.prompt).toMessage();
+/**
+ * Begins a new dialog as an interruption. If the stack has a depth of 1 that means
+ * only the interruption exists so it will be replaced with the new dialog. Otherwise,
+ * the interruption will stay on the stack and ensure that ResumeReason.reprompt is
+ * returned.  This is to fix an issue with waterfalls that they can advance when we
+ * don't want them too.
+ * dialogArgs: { 
+ *      dialogId: string; 
+ *      dialogArgs?: any;
+ *      isRootDialog?: boolean;
+ * }
+ */
+systemLib.dialog(consts.DialogId.Interruption, [
+    function (session, args) {
+        if (session.sessionState.callstack.length > 1) {
+            session.beginDialog(args.dialogId, args.dialogArgs);
+        } else {
+            session.replaceDialog(args.dialogId, args.dialogArgs);
+        }
+    },
+    function (session, results) {
+        session.endDialogWithResult({ resumed: ResumeReason.reprompt });
     }
-    if (typeof args.retryPrompt == 'object' && (<IIsMessage>args.retryPrompt).toMessage) {
-        args.retryPrompt = (<IIsMessage>args.retryPrompt).toMessage();
+]);
+
+
+/**
+ * Prompts the user to disambiguate between multiple routes that were troggered.
+ * dialogArgs: { 
+ *      prompt: string|string[]|IMessage|IIsMessage;
+ *      choices: IDisambiguateChoices;
+ *      options?: IPromptsOptions;
+ * }
+ */
+systemLib.dialog(consts.DialogId.Disambiguate, [
+    function (session, args) {
+        // Prompt user
+        session.dialogData.choices = args.choices;
+        Prompts.choice(session, args.prompt, args.choices, args.options);
+    },
+    function (session, results) {
+        var route = session.dialogData.choices[results.response.entity];
+        if (route) {
+            // Pop ourselves off the stack
+            var stack = session.dialogStack();
+            stack.pop();
+            session.dialogStack(stack);
+
+            // Route to action
+            session.library.library(route.libraryName).selectRoute(session, route);
+        } else {
+            // Return with reprompt
+            session.endDialogWithResult({ resumed: ResumeReason.reprompt });
+        }
     }
-    session.beginDialog(consts.DialogId.Prompts, args);
-}
+]);

@@ -31,11 +31,13 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-import sprintf = require('sprintf-js');
-import Channel = require('./Channel');
-import ses = require('./Session');
-import consts = require('./consts');
-import prompts = require('./dialogs/Prompts');
+import { Session } from './Session';
+import { IRecognizeContext } from './dialogs/IntentRecognizer'
+import { PromptType, IPromptOptions } from './dialogs/Prompt';
+import { IPromptArgs } from './deprecated/LegacyPrompts';
+import * as Channel from './Channel';
+import * as consts from './consts';
+import * as sprintf from 'sprintf-js';
 
 const debugLoggingEnabled = new RegExp('\\bbotbuilder\\b', 'i').test(process.env.NODE_DEBUG || '');
 
@@ -44,16 +46,16 @@ export function error(fmt: string, ...args: any[]): void {
     console.error('ERROR: ' + msg);
 }
 
-export function warn(addressable: ses.Session|IMessage|IAddress, fmt: string, ...args: any[]): void {
-    var prefix = getPrefix(<ses.Session>addressable);
+export function warn(addressable: Session|IRecognizeContext|IMessage|IAddress, fmt: string, ...args: any[]): void {
+    var prefix = getPrefix(<Session>addressable);
     var msg = args.length > 0 ? sprintf.vsprintf(fmt, args) : fmt;
     console.warn(prefix + 'WARN: ' + msg);
 }
 
-export function info(addressable: ses.Session|IMessage|IAddress, fmt: string, ...args: any[]): void {
+export function info(addressable: Session|IRecognizeContext|IMessage|IAddress, fmt: string, ...args: any[]): void {
     var channelId = Channel.getChannelId(addressable);
     if (channelId === Channel.channels.emulator || debugLoggingEnabled){
-        var prefix = getPrefix(<ses.Session>addressable);
+        var prefix = getPrefix(<Session>addressable);
         var msg = args.length > 0 ? sprintf.vsprintf(fmt, args) : fmt;
         console.info(prefix + msg);
     }
@@ -81,32 +83,35 @@ function debugLog(trace:boolean, fmt: string, args: any[]): void {
 }
 
 
-function getPrefix(addressable: ses.Session): string {
+export function getPrefix(addressable: Session|IDialogState[]): string {
     var prefix = '';
-    if (addressable && addressable.sessionState && addressable.sessionState.callstack) {
-        var callstack = addressable.sessionState.callstack;
-        for (var i = 0; i < callstack.length; i++) {
-            if (i == callstack.length - 1) {
-                var cur = callstack[i];
-                switch (cur.id) {
-                    case consts.DialogId.Prompts:
-                        var promptType = prompts.PromptType[(<prompts.IPromptArgs>cur.state).promptType];
-                        prefix += 'Prompts.' + promptType + ' - ';
-                        break;
-                    case consts.DialogId.FirstRun:
-                        prefix += 'Middleware.firstRun - '; 
-                        break;
-                    default:
-                        if (cur.id.indexOf('*:') == 0) {
-                            prefix += cur.id.substr(2) + ' - ';
-                        } else {
-                            prefix += cur.id + ' - ';
-                        }
-                        break;
-                }
-            } else {
-                prefix += '.';
+    var callstack: IDialogState[];
+    if (Array.isArray(addressable)) {
+        callstack = addressable;
+    } else {
+        callstack = addressable && addressable.sessionState && addressable.sessionState.callstack ? addressable.sessionState.callstack : [];
+    }
+    for (var i = 0; i < callstack.length; i++) {
+        if (i == callstack.length - 1) {
+            var cur = callstack[i];
+            switch (cur.id) {
+                case 'BotBuilder:Prompts':
+                    var promptType = PromptType[(<IPromptArgs>cur.state).promptType];
+                    prefix += 'Prompts.' + promptType + ' - ';
+                    break;
+                case consts.DialogId.FirstRun:
+                    prefix += 'Middleware.firstRun - '; 
+                    break;
+                default:
+                    if (cur.id.indexOf('*:') == 0) {
+                        prefix += cur.id.substr(2) + ' - ';
+                    } else {
+                        prefix += cur.id + ' - ';
+                    }
+                    break;
             }
+        } else {
+            prefix += '.';
         }
     }
     return prefix;

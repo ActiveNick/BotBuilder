@@ -31,23 +31,24 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-import dialog = require('./Dialog');
-import ses = require('../Session');
+import { Dialog, ResumeReason, IDialogResult } from './Dialog';
+import { Session } from '../Session';
+import * as consts from '../consts';
 
-export class SimpleDialog extends dialog.Dialog {
-    constructor(private fn: (session: ses.Session, args?: any) => void) {
+export class SimpleDialog extends Dialog {
+    constructor(private fn: (session: Session, args?: any) => void) {
         super();
     }
 
-    public begin<T>(session: ses.Session, args?: T): void {
+    public begin<T>(session: Session, args?: T): void {
         this.fn(session, args);
     }
 
-    public replyReceived(session: ses.Session): void {
+    public replyReceived(session: Session): void {
         this.fn(session);
     }
 
-    public dialogResumed(session: ses.Session, result: any): void {
+    public dialogResumed(session: Session, result: any): void {
         this.fn(session, result);
     }
 }

@@ -4,7 +4,7 @@
 // 
 // Microsoft Bot Framework: http://botframework.com
 // 
-// Bot Builder SDK Github:
+// Bot Builder SDK GitHub:
 // https://github.com/Microsoft/BotBuilder
 // 
 // Copyright (c) Microsoft Corporation
@@ -33,21 +33,21 @@
 
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
-
-using Microsoft.VisualStudio.TestTools.UnitTesting;
-
 using Autofac;
-using Moq;
-using Microsoft.Bot.Builder.Luis;
 using Microsoft.Bot.Builder.Dialogs;
-using Microsoft.Bot.Builder.Luis.Models;
 using Microsoft.Bot.Builder.Internals.Fibers;
+using Microsoft.Bot.Builder.Luis;
+using Microsoft.Bot.Builder.Luis.Models;
 using Microsoft.Bot.Connector;
+using Microsoft.VisualStudio.TestTools.UnitTesting;
+using Moq;
+using Action = Microsoft.Bot.Builder.Luis.Models.Action;
 
 namespace Microsoft.Bot.Builder.Tests
 {
@@ -56,15 +56,38 @@ namespace Microsoft.Bot.Builder.Tests
         public static IntentRecommendation[] IntentsFor<D>(Expression<Func<D, Task>> expression, double? score)
         {
             var body = (MethodCallExpression)expression.Body;
-            var attribute = body.Method.GetCustomAttribute<LuisIntentAttribute>();
-            var name = attribute.IntentName;
-            var intent = new IntentRecommendation(name, score);
-            return new[] { intent };
+            var attributes = body.Method.GetCustomAttributes<LuisIntentAttribute>();
+            var intents = attributes
+                .Select(attribute => new IntentRecommendation(attribute.IntentName, score))
+                .ToArray();
+            return intents;
         }
 
-        public static EntityRecommendation EntityFor(string type, string entity)
+        public static EntityRecommendation EntityFor(string type, string entity, IDictionary<string, object> resolution = null)
         {
-            return new EntityRecommendation(type: type) { Entity = entity };
+            return new EntityRecommendation(type: type) { Entity = entity, Resolution = resolution };
+        }
+
+        public static EntityRecommendation EntityForDate(string type, DateTime date)
+        {
+            return EntityFor(type,
+                date.ToString("d", DateTimeFormatInfo.InvariantInfo),
+                new Dictionary<string, object>()
+                {
+                    { "resolution_type", "builtin.datetime.date" },
+                    { "date", date.ToString("yyyy-MM-dd", DateTimeFormatInfo.InvariantInfo) }
+                });
+        }
+
+        public static EntityRecommendation EntityForTime(string type, DateTime time)
+        {
+            return EntityFor(type,
+                time.ToString("t", DateTimeFormatInfo.InvariantInfo),
+                new Dictionary<string, object>()
+                {
+                    { "resolution_type", "builtin.datetime.time" },
+                    { "time", time.ToString("THH:mm:ss", DateTimeFormatInfo.InvariantInfo) }
+                });
         }
 
         public static void SetupLuis<D>(
@@ -91,13 +114,17 @@ namespace Microsoft.Bot.Builder.Tests
             params EntityRecommendation[] entities
             )
         {
+            var uri = new UriBuilder() { Query = utterance }.Uri;
             luis
-                .Setup(l => l.BuildUri(utterance))
-                .Returns(new UriBuilder() { Query = utterance }.Uri);
+                .Setup(l => l.BuildUri(It.Is<LuisRequest>(r => r.Query == utterance)))
+                .Returns(uri);
+
+            luis.Setup(l => l.ModifyRequest(It.IsAny<LuisRequest>()))
+                .Returns<LuisRequest>(r => r);
 
             luis
-                .Setup(l => l.QueryAsync(It.IsAny<Uri>(), It.IsAny<CancellationToken>()))
-                .Returns<Uri>(async (uri) =>
+                .Setup(l => l.QueryAsync(uri, It.IsAny<CancellationToken>()))
+                .Returns<Uri, CancellationToken>(async (_, token) =>
                 {
                     return new LuisResult()
                     {
@@ -232,6 +259,14 @@ namespace Microsoft.Bot.Builder.Tests
                 await context.PostAsync(luisResult.Entities.Single().Type);
                 context.Wait(MessageReceived);
             }
+
+            [LuisIntent("IntentOne")]
+            public async Task IntentOne(IDialogContext context, LuisResult luisResult)
+            {
+                await context.PostAsync(luisResult.Intents.Single().Actions.Single().Name);
+                context.Wait(MessageReceived);
+            }
+
         }
 
         [TestMethod]
@@ -263,6 +298,110 @@ namespace Microsoft.Bot.Builder.Tests
                 SetupLuis<MultiServiceLuisDialog>(service2, d => d.ServiceTwo(null, null), 1.0, new EntityRecommendation(type: EntityTwo));
 
                 await AssertScriptAsync(container, "hello", EntityTwo);
+            }
+        }
+
+
+        [TestMethod]
+        public async Task Service_With_LuisActionDialog()
+        {
+            var service = new Mock<ILuisService>(MockBehavior.Strict);
+            var contextId = "test";
+            var intent = "IntentOne";
+            var prompt = "ParamOne?";
+            var action = "IntentOneAction";
+
+            service
+                .Setup(l => l.BuildUri(It.IsAny<LuisRequest>()))
+                .Returns<LuisRequest>(request =>
+                        request.BuildUri(new LuisModelAttribute("model", "subs", LuisApiVersion.V2))
+                );
+
+            service
+                .Setup(l => l.ModifyRequest(It.IsAny<LuisRequest>()))
+                .Returns<LuisRequest>(r => r);
+
+            service
+                .Setup(l => l.QueryAsync(It.Is<Uri>(t => t.AbsoluteUri.Contains($"&contextId={contextId}")), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new LuisResult()
+                {
+                    Intents = new List<IntentRecommendation>()
+                    {
+                        new IntentRecommendation()
+                        {
+                            Intent = intent,
+                            Score =  1.0,
+                            Actions =  new List<Action>
+                            {
+                                new Action
+                                {
+                                    Triggered = true,
+                                    Name = action,
+                                    Parameters = new List<ActionParameter>()
+                                    {
+                                        new ActionParameter()
+                                        {
+                                            Name = "ParamOne",
+                                            Required = true,
+                                            Value = new List<EntityRecommendation>()
+                                            {
+                                                new EntityRecommendation
+                                                {
+                                                    Type = "EntityOne",
+                                                    Score = 1.0
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    Entities = new List<EntityRecommendation>()
+                    {
+                        new EntityRecommendation
+                        {
+                            Type = "EntityOne",
+                            Score = 1.0
+                        }
+                    },
+                    Dialog = new DialogResponse()
+                    {
+                        ContextId = contextId,
+                        Status = DialogResponse.DialogStatus.Finished
+                    }
+                });
+
+            service
+                .Setup(
+                    l => l.QueryAsync(It.Is<Uri>(t => t.AbsoluteUri.Contains("q=start")), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(new LuisResult
+                {
+                    TopScoringIntent = new IntentRecommendation
+                    {
+                        Intent = intent,
+                        Score = 1.0
+                    },
+                    Dialog = new DialogResponse
+                    {
+                        ContextId = contextId,
+                        Status = DialogResponse.DialogStatus.Question,
+                        Prompt = prompt
+                    }
+                });
+
+
+            var dialog = new MultiServiceLuisDialog(service.Object);
+            using (new FiberTestBase.ResolveMoqAssembly(service.Object))
+            using (var container = Build(Options.ResolveDialogFromContainer, service.Object))
+            {
+                var builder = new ContainerBuilder();
+                builder
+                    .RegisterInstance(dialog)
+                    .As<IDialog<object>>();
+                builder.Update(container);
+
+                await AssertScriptAsync(container, "start", prompt, "EntityOne", action);
             }
         }
 
@@ -298,8 +437,8 @@ namespace Microsoft.Bot.Builder.Tests
 
             // https://github.com/Microsoft/BotBuilder/issues/247
             // https://github.com/Microsoft/BotBuilder/pull/76
-            Assert.AreNotEqual("https://api.projectoxford.ai/luis/v1/application?id=modelID&subscription-key=subscriptionID&q=Fran%25u00e7ais", uri.AbsoluteUri);
-            Assert.AreEqual("https://api.projectoxford.ai/luis/v1/application?id=modelID&subscription-key=subscriptionID&q=Fran%C3%A7ais", uri.AbsoluteUri);
+            Assert.AreNotEqual("https://westus.api.cognitive.microsoft.com/luis/v2.0/apps/modelID?subscription-key=subscriptionID&q=Fran%25u00e7ais&log=True", uri.AbsoluteUri);
+            Assert.AreEqual("https://westus.api.cognitive.microsoft.com/luis/v2.0/apps/modelID?subscription-key=subscriptionID&q=Fran%C3%A7ais&log=True", uri.AbsoluteUri);
         }
     }
 }

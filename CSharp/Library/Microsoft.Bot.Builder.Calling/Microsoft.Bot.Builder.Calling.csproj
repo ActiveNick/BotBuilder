@@ -88,7 +88,6 @@
     <Compile Include="Models\Contracts\AnswerOutcome.cs" />
     <Compile Include="Models\Contracts\BaseMessage.cs" />
     <Compile Include="Models\Contracts\CallbackLink.cs" />
-    <Compile Include="Models\Contracts\CallStateChangeNotification.cs" />
     <Compile Include="Models\Contracts\ChoiceOutcome.cs" />
     <Compile Include="Models\Contracts\CollectDigits.cs" />
     <Compile Include="Models\Contracts\CollectDigitsOutcome.cs" />
@@ -97,9 +96,6 @@
     <Compile Include="Models\Contracts\ConversationResult.cs" />
     <Compile Include="Models\Contracts\Hangup.cs" />
     <Compile Include="Models\Contracts\HangupOutcome.cs" />
-    <Compile Include="Models\Contracts\NotificationBase.cs" />
-    <Compile Include="Models\Contracts\NotificationConverter.cs" />
-    <Compile Include="Models\Contracts\NotificationResponse.cs" />
     <Compile Include="Models\Contracts\OperationOutcomeBase.cs" />
     <Compile Include="Models\Contracts\OperationOutcomeConverter.cs" />
     <Compile Include="Models\Contracts\Participant.cs" />
@@ -128,7 +124,6 @@
     <Compile Include="Models\Misc\MinValues.cs" />
     <Compile Include="Models\Misc\ModalityType.cs" />
     <Compile Include="Models\Misc\MultiPartConstants.cs" />
-    <Compile Include="Models\Misc\NotificationType.cs" />
     <Compile Include="Models\Misc\Outcome.cs" />
     <Compile Include="Models\Misc\RecognitionCompletionReason.cs" />
     <Compile Include="Models\Misc\RecordingCompletionReason.cs" />
@@ -148,7 +143,7 @@
     <None Include="packages.config" />
   </ItemGroup>
   <ItemGroup>
-    <ProjectReference Include="..\Microsoft.Bot.Builder.csproj">
+    <ProjectReference Include="..\Microsoft.Bot.Builder\Microsoft.Bot.Builder.csproj">
       <Project>{cdfec7d6-847e-4c13-956b-0a960ae3eb60}</Project>
       <Name>Microsoft.Bot.Builder</Name>
     </ProjectReference>

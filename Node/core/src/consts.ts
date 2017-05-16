@@ -31,22 +31,25 @@
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
 
-export var agent = 'botbuilder';
-export var messageType = 'message';
-export var defaultConnector = '*';
-export var emulatorChannel = 'emulator';
+export const agent = 'botbuilder';
+export const messageType = 'message';
+export const invokeType = 'invoke';
+export const defaultConnector = '*';
+export const defaultLocale = '*';
+export const emulatorChannel = 'emulator';
+export const intentEntityType = 'intent';
 
-export var Errors = {
+export const Errors = {
     EMSGSIZE: 'EMSGSIZE',
     EBADMSG: 'EBADMSG'
 };
 
-export var Library =  {
+export const Library =  {
     system: 'BotBuilder',
     default: '*'
 };
 
-export var Data = {
+export const Data = {
     SessionState: 'BotBuilder.Data.SessionState',
     SessionId: 'BotBuilder.Data.SessionId',
     Handler: 'BotBuilder.Data.Handler',
@@ -56,19 +59,34 @@ export var Data = {
     Form: 'BotBuilder.Data.Form',
     Field: 'BotBuilder.Data.Field',
     FirstRunVersion: 'BotBuilder.Data.FirstRunVersion',
-    PreferredLocale: 'BotBuilder.Data.PreferredLocale'
+    PreferredLocale: 'BotBuilder.Data.PreferredLocale',
+    DebugAddress: 'BotBuilder.Data.DebugAddress',
+    DebugWatches: 'BotBuilder.Data.DebugWatches'
 };
 
-export var DialogId = {
-    Prompts: 'BotBuilder:Prompts',
+export const DialogId = {
     FirstRun: 'BotBuilder:FirstRun',
-    Field: 'BotBuilder:Field'
+    ConfirmCancel: 'BotBuilder:ConfirmCancel',
+    ConfirmInterruption: 'BotBuilder:ConfirmInterruption',
+    Interruption: 'BotBuilder:Interruption',
+    Disambiguate: 'BotBuilder:Disambiguate'
 };
 
-export var Id = {
+export const Id = {
     DefaultGroup: 'BotBuilder.Id.DefaultGroup'
 };
 
-export var Intents = {
-    Default: 'BotBuilder.Intents.Default'
+export const Intents = {
+    Default: 'BotBuilder.DefaultIntent',
+    Response: 'BotBuilder.ResponseIntent',
+    Repeat: 'BotBuilder.RepeatIntent'
+};
+
+export const Entities = {
+    Response: 'BotBuilder.Entities.Response',
+    Number: 'number',
+    String: 'string',
+    Date: 'date',
+    Boolean: 'boolean',
+    Match: 'match'
 };

@@ -206,7 +206,15 @@ export class CallConnector implements ucb.ICallConnector, bs.IBotStorage {
                         var secret = this.getSecretForKey(keyId);
 
                         try {
-                            decoded = jwt.verify(token, secret);
+
+                            let jwtVerifyOptions = {
+                                audience: this.settings.appId,
+                                ignoreExpiration: false,
+                                ignoreNotBefore: false,
+                                clockTolerance: 300
+                            };
+
+                            decoded = jwt.verify(token, secret, jwtVerifyOptions);
                             this.dispatch(req.body, callback);
                         } catch(err) {
                             res.status(403);
@@ -304,7 +312,8 @@ export class CallConnector implements ucb.ICallConnector, bs.IBotStorage {
                 if (!err) {
                     callback(null, data);
                 } else {
-                    callback(err instanceof Error ? err : new Error(err.toString()), null);
+                    var msg = err.toString();
+                    callback(err instanceof Error ? err : new Error(msg), null);
                 }
             });
         } catch (e) {
@@ -360,7 +369,8 @@ export class CallConnector implements ucb.ICallConnector, bs.IBotStorage {
                     if (!err) {
                         callback(null);
                     } else {
-                        callback(err instanceof Error ? err : new Error(err.toString()));
+                        var msg = err.toString();
+                        callback(err instanceof Error ? err : new Error(msg));
                     }
                 }
             });

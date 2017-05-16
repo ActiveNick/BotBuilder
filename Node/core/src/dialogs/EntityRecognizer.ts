@@ -1,15 +1,15 @@
-﻿// 
+﻿//
 // Copyright (c) Microsoft. All rights reserved.
 // Licensed under the MIT license.
-// 
+//
 // Microsoft Bot Framework: http://botframework.com
-// 
+//
 // Bot Builder SDK Github:
 // https://github.com/Microsoft/BotBuilder
-// 
+//
 // Copyright (c) Microsoft Corporation
 // All rights reserved.
-// 
+//
 // MIT License:
 // Permission is hereby granted, free of charge, to any person obtaining
 // a copy of this software and associated documentation files (the
@@ -18,10 +18,10 @@
 // distribute, sublicense, and/or sell copies of the Software, and to
 // permit persons to whom the Software is furnished to do so, subject to
 // the following conditions:
-// 
+//
 // The above copyright notice and this permission notice shall be
 // included in all copies or substantial portions of the Software.
-// 
+//
 // THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND,
 // EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
 // MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
@@ -30,12 +30,13 @@
 // OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
 // WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 //
+import { IRecognizeContext } from './IntentRecognizer';
+import * as utils from '../utils';
+import * as sprintf from 'sprintf-js';
+import * as chrono from 'chrono-node';
+import * as consts from '../consts';
 
-import utils = require('../utils');
-import sprintf = require('sprintf-js');
-import chrono = require('chrono-node');
-
-interface ILuisDateTimeEntity extends IEntity {
+interface ILuisDateTimeEntity extends IEntity<string> {
     resolution: {
         resolution_type: string;
         date?: string;
@@ -45,7 +46,7 @@ interface ILuisDateTimeEntity extends IEntity {
     };
 }
 
-interface IChronoDuration extends IEntity {
+interface IChronoDuration extends IEntity<string> {
     resolution: {
         resolution_type: string;
         start: Date;
@@ -62,12 +63,12 @@ export interface IFindMatchResult {
 
 export class EntityRecognizer {
     static dateExp = /^\d{4}-\d{2}-\d{2}/i;
-    static yesExp = /^(1|y|yes|yep|sure|ok|true)/i;
-    static noExp = /^(2|n|no|nope|not|false)/i;
+    static yesExp = /^(1|y|yes|yep|sure|ok|true)(\W|$)/i;
+    static noExp = /^(2|n|no|nope|not|false)(\W|$)/i;
     static numberExp = /[+-]?(?:\d+\.?\d*|\d*\.?\d+)/;
     static ordinalWords = 'first|second|third|fourth|fifth|sixth|seventh|eigth|ninth|tenth';
 
-    static findEntity(entities: IEntity[], type: string): IEntity {
+    static findEntity(entities: IEntity<string>[], type: string): IEntity<string> {
         for (var i = 0; entities && i < entities.length; i++) {
             if (entities[i].type == type) {
                 return entities[i];
@@ -76,8 +77,8 @@ export class EntityRecognizer {
         return null;
     }
 
-    static findAllEntities(entities: IEntity[], type: string): IEntity[] {
-        var found: IEntity[] = [];
+    static findAllEntities(entities: IEntity<string>[], type: string): IEntity<string>[] {
+        var found: IEntity<string>[] = [];
         for (var i = 0; entities && i < entities.length; i++) {
             if (entities[i].type == type) {
                 found.push(entities[i]);
@@ -87,15 +88,15 @@ export class EntityRecognizer {
     }
 
     static parseTime(utterance: string): Date;
-    static parseTime(entities: IEntity[]): Date;
+    static parseTime(entities: IEntity<string>[]): Date;
     static parseTime(entities: any): Date {
         if (typeof entities == 'string') {
-            entities = EntityRecognizer.recognizeTime(entities);  
+            entities = [EntityRecognizer.recognizeTime(entities)];  
         }
         return EntityRecognizer.resolveTime(entities);
     }
 
-    static resolveTime(entities: IEntity[]): Date {
+    static resolveTime(entities: IEntity<string>[]): Date {
         var now = new Date();
         var resolvedDate: Date;
         var date: string;
@@ -175,19 +176,19 @@ export class EntityRecognizer {
         return response;
     }
 
-    static parseNumber(entities: string | IEntity[]): number {
-        var entity: IEntity;
+    static parseNumber(entities: string | IEntity<string>[]): number {
+        var entity: IEntity<string>;
         if (typeof entities == 'string') {
             entity = { type: 'text', entity: (<string>entities).trim() };
         } else {
-            entity = EntityRecognizer.findEntity(<IEntity[]>entities, 'builtin.number');
+            entity = EntityRecognizer.findEntity(<IEntity<string>[]>entities, 'builtin.number');
         }
         if (entity) {
             var match = this.numberExp.exec(entity.entity);
             if (match) {
                 return Number(match[0]);
             }
-            var oWordMatch = this.findBestMatch(this.ordinalWords, entity.entity, 0);
+            var oWordMatch = this.findBestMatch(this.ordinalWords, entity.entity, 1.0);
             if (oWordMatch) {
                 return oWordMatch.index+1;
             }
@@ -195,8 +196,19 @@ export class EntityRecognizer {
         return Number.NaN;
     }
 
-    static parseBoolean(utterance: string): boolean {
+    static parseBoolean(utterance: string, context?: IRecognizeContext): boolean {
         utterance = utterance.trim();
+        if (context) {
+            var locale = context.preferredLocale();
+            var pattern = context.localizer.trygettext(locale, 'yesExp', consts.Library.system);
+            if (pattern) { 
+                EntityRecognizer.yesExp = new RegExp(pattern,'i');
+            } 
+            pattern = context.localizer.trygettext(locale, 'noExp', consts.Library.system);
+            if (pattern) {
+                EntityRecognizer.noExp = new RegExp(pattern, 'i');
+            }
+        }
         if (EntityRecognizer.yesExp.test(utterance)) {
             return true;
         } else if (EntityRecognizer.noExp.test(utterance)) {
@@ -215,7 +227,7 @@ export class EntityRecognizer {
         });
         return best;
     }
-    
+
     static findAllMatches(choices: string | Object | string[], utterance: string, threshold = 0.6): IFindMatchResult[] {
         var matches: IFindMatchResult[] = [];
         utterance = utterance.trim().toLowerCase();
@@ -236,13 +248,13 @@ export class EntityRecognizer {
                 });
                 score = matched.length / value.length;
             }
-            if (score > threshold) {
+            if (score >= threshold) {
                 matches.push({ index: index, entity: choice, score: score });
             }
         });
         return matches;
     }
-    
+
     static expandChoices(choices: string | Object | string[]): string[] {
         if (!choices) {
             return [];
@@ -257,7 +269,7 @@ export class EntityRecognizer {
             }
             return list;
         } else {
-            return [choices.toString()];
+            return [(<string>choices).toString()];
         }
     }
 }
